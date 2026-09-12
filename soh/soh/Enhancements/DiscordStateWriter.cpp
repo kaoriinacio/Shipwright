@@ -19,10 +19,9 @@ extern PlayState* gPlayState;
 #define CVAR_DISCORD(name) CVAR_ENHANCEMENT("Discord." name)
 
 static constexpr const char* DISCORD_CLIENT_ID = "1548247424072417290";
-static constexpr const char* LARGE_IMAGE_KEY   = "soh_icon";
+static constexpr const char* LARGE_IMAGE_KEY   = ""; // vazio = pula assets
 static constexpr const char* LARGE_IMAGE_TXT   = "The Legend of Zelda: Ocarina of Time";
 
-// ---------- tabela de cenas (versão EN só, PT-BR vem na etapa 3) ----------
 static const char* GetSceneName(int16_t sceneNum) {
     switch (sceneNum) {
         case SCENE_DEKU_TREE: return "Deku Tree";
@@ -75,7 +74,6 @@ static const char* GetSceneName(int16_t sceneNum) {
     }
 }
 
-// ---------- formatação ----------
 static std::string FormatSessionTime() {
     static const time_t start = std::time(nullptr);
     long secs = (long)(std::time(nullptr) - start);
@@ -102,7 +100,7 @@ static std::string FormatGameTime() {
 }
 
 static const char* SwordName() {
-    switch (gSaveContext.equips.sword) {
+    switch ((int)CUR_EQUIP_VALUE(EQUIP_TYPE_SWORD)) {
         case 0: return "None";
         case 1: return "Kokiri Sword";
         case 2: return "Master Sword";
@@ -112,7 +110,7 @@ static const char* SwordName() {
 }
 
 static const char* BootsName() {
-    switch (gSaveContext.equips.boots) {
+    switch ((int)CUR_EQUIP_VALUE(EQUIP_TYPE_BOOTS)) {
         case 0: return "None";
         case 1: return "Kokiri Boots";
         case 2: return "Iron Boots";
@@ -129,7 +127,6 @@ static void CountQuest(int& medallions, int& stones) {
     for (int i = 18; i <= 20; i++) if (q & (1 << i)) stones++;
 }
 
-// ---------- payload ----------
 static void BuildPresence(std::string& outDetails, std::string& outState) {
     if (gPlayState == nullptr) {
         outDetails = "In menus";
@@ -195,7 +192,6 @@ static void BuildPresence(std::string& outDetails, std::string& outState) {
     outState = state;
 }
 
-// ---------- loop ----------
 static uint32_t sFrameCounter = 0;
 static bool s_discordInitialized = false;
 
