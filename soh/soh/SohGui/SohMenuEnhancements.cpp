@@ -175,6 +175,11 @@ static const std::map<int32_t, const char*> mirroredWorldModes = {
     { MIRRORED_WORLD_DUNGEONS_RANDOM_SEEDED, "Dungeons Random (Seeded)" },
 };
 
+static const std::map<int32_t, const char*> discordLanguageOptions = {
+    { 0, "English" },
+    { 1, "Portugues (BR)" },
+};
+
 static uint8_t CountVisibleFileSelectQuests() {
     uint8_t count = 0;
 
@@ -2218,6 +2223,17 @@ void SohMenu::AddMenuEnhancements() {
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "Shows what you're doing in Ocarina of Time on your Discord profile."));
+
+    AddWidget(path, "Language / Idioma", WIDGET_CVAR_COMBOBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.Language"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(ComboboxOptions()
+                     .ComboMap(discordLanguageOptions)
+                     .DefaultIndex(0)
+                     .Tooltip("Language used only on the Discord Rich Presence, not in-game."));
 
     AddWidget(path, "Show Current Area", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("Discord.ShowArea"))
