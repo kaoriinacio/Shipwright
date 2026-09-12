@@ -1,4 +1,4 @@
-﻿#include "SohMenu.h"
+#include "SohMenu.h"
 #include <soh/Enhancements/enhancementTypes.h>
 #include "soh/Enhancements/SwitchAge.h"
 #include "soh/Enhancements/AdultMasks.h"
@@ -2205,6 +2205,102 @@ void SohMenu::AddMenuEnhancements() {
             .CVar(timer.timeEnable)
             .Callback([](WidgetInfo& info) { TimeDisplayUpdateDisplayOptions(); });
     }
+
+    // ============================================================
+    // Discord Rich Presence
+    // ============================================================
+    path.sidebarName = "Discord";
+    AddSidebarEntry("Enhancements", path.sidebarName, 1);
+    path.column = SECTION_COLUMN_1;
+
+    AddWidget(path, "Enable Rich Presence", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.Enabled"))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "Shows what you're doing in Ocarina of Time on your Discord profile."));
+
+    AddWidget(path, "Show Current Area", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowArea"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(CheckboxOptions().DefaultValue(true));
+
+    AddWidget(path, "Show Room Info", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowRoom"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        });
+
+    AddWidget(path, "Show In-Game Time", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowGameTime"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(CheckboxOptions().DefaultValue(true));
+
+    AddWidget(path, "Show Session Time", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowPlayTime"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(CheckboxOptions().DefaultValue(true));
+
+    AddWidget(path, "Show Hearts", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowHealth"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(CheckboxOptions().DefaultValue(true));
+
+    AddWidget(path, "Show Link's Age", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowAge"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(CheckboxOptions().DefaultValue(true));
+
+    AddWidget(path, "Show Equipment", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowEquipment"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        });
+
+    AddWidget(path, "Show Quest Progress", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowProgress"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(CheckboxOptions().DefaultValue(true));
+
+    AddWidget(path, "Show Rupees", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Discord.ShowRupees"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        });
+
+    AddWidget(path, "Update Interval: %d frames", WIDGET_CVAR_SLIDER_INT)
+        .CVar(CVAR_ENHANCEMENT("Discord.UpdateInterval"))
+        .RaceDisable(false)
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("Discord.Enabled"), 1);
+        })
+        .Options(IntSliderOptions()
+                     .Min(10)
+                     .Max(300)
+                     .DefaultValue(30)
+                     .Format("%d frames")
+                     .Tooltip("How often the Discord presence updates (in frames). Lower = more responsive but "
+                              "more Discord API calls."));
 }
 
 } // namespace SohGui
