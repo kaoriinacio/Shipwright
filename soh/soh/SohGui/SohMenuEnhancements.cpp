@@ -1,4 +1,5 @@
 ﻿#include "SohMenu.h"
+#include "soh/Discord/DiscordMenu.h"
 #include <soh/Enhancements/enhancementTypes.h>
 #include "soh/Enhancements/SwitchAge.h"
 #include "soh/Enhancements/AdultMasks.h"
