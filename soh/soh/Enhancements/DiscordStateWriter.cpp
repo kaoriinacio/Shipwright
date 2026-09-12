@@ -10,6 +10,7 @@
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
+#include "Discord/DiscordIPC.h"
 
 extern "C" {
 #include <z64.h>
@@ -17,6 +18,10 @@ extern "C" {
 #include "macros.h"
 extern PlayState* gPlayState;
 }
+
+static constexpr const char* DISCORD_CLIENT_ID = "1548247424072417290";
+static constexpr const char* LARGE_IMAGE_KEY   = "soh_icon"; // "" se não subiu o asset
+static constexpr const char* LARGE_IMAGE_TXT   = "The Legend of Zelda: Ocarina of Time";
 
 static const char* GetSceneName(int16_t sceneNum) {
     switch (sceneNum) {
@@ -131,71 +136,47 @@ static const char* GetSceneName(int16_t sceneNum) {
 }
 
 static uint32_t sFrameCounter = 0;
-static const uint32_t WRITE_INTERVAL_FRAMES = 30; // ~1x/seg a 30fps
+static const uint32_t UPDATE_INTERVAL_FRAMES = 30; // ~1x/seg a 30fps
+static bool s_discordInitialized = false;
+static const char* s_lastScene = nullptr;
+static int s_lastHearts = -1;
+static int s_lastAge = -1;
 
-static std::string GetStateFilePath() {
-    // No Windows o SoH é portátil: os arquivos de config/otr ficam do lado
-    // do soh.exe, não em %APPDATA%. Escrevemos game_state.json ali também.
-#ifdef _WIN32
-    char exePath[MAX_PATH];
-    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-    std::string path(exePath);
-    size_t lastSlash = path.find_last_of("\\/");
-    std::string dir = (lastSlash != std::string::npos) ? path.substr(0, lastSlash) : ".";
-    return dir + "\\game_state.json";
-#else
-    return "./game_state.json";
-#endif
-}
+static void UpdateDiscordPresence() {
+    if (!s_discordInitialized) {
+        DiscordIPC::Init(DISCORD_CLIENT_ID);
+        s_discordInitialized = true;
+    }
 
-static void WriteGameState() {
+    // ping a cada 15s (o Discord derruba se ficar muito tempo sem ping)
+    DiscordIPC::Tick();
+
     if (gPlayState == nullptr) return;
 
-    Player* player = GET_PLAYER(gPlayState);
-
-    int sceneNum      = gPlayState->sceneNum;
+    int sceneNum = gPlayState->sceneNum;
     const char* sceneName = GetSceneName(sceneNum);
-    int roomNum       = gPlayState->roomCtx.curRoom.num;
-    int health        = gSaveContext.health;       // 1/16 de coração por unidade
-    bool isChild      = (gSaveContext.linkAge == LINK_AGE_CHILD);
-    float posX = player ? player->actor.world.pos.x : 0.0f;
-    float posY = player ? player->actor.world.pos.y : 0.0f;
-    float posZ = player ? player->actor.world.pos.z : 0.0f;
+    int hearts = gSaveContext.health / 16;
+    int age = (int)gSaveContext.linkAge;
 
-    static auto sessionStart = std::chrono::system_clock::now();
-    long long sessionStartEpoch = std::chrono::duration_cast<std::chrono::seconds>(
-        sessionStart.time_since_epoch()).count();
+    // só manda update se algo mudou (evita rate limit)
+    if (sceneName == s_lastScene && hearts == s_lastHearts && age == s_lastAge) return;
+    s_lastScene = sceneName;
+    s_lastHearts = hearts;
+    s_lastAge = age;
 
-    FILE* f = fopen(GetStateFilePath().c_str(), "w");
-    if (!f) return;
+    std::string details = std::string("Explorando: ") + sceneName;
+    std::string stateStr = std::string(age == LINK_AGE_CHILD ? "Link Crianca" : "Link Adulto")
+                         + " • " + std::to_string(hearts) + " coracoes";
 
-    fprintf(f,
-        "{\n"
-        "  \"sceneNum\": %d,\n"
-        "  \"sceneName\": \"%s\",\n"
-        "  \"roomNum\": %d,\n"
-        "  \"health\": %d,\n"
-        "  \"isChild\": %s,\n"
-        "  \"posX\": %.1f,\n"
-        "  \"posY\": %.1f,\n"
-        "  \"posZ\": %.1f,\n"
-        "  \"sessionStart\": %lld\n"
-        "}\n",
-        sceneNum, sceneName, roomNum, health,
-        isChild ? "true" : "false",
-        posX, posY, posZ,
-        sessionStartEpoch
-    );
-
-    fclose(f);
+    DiscordIPC::Update(details, stateStr, LARGE_IMAGE_KEY, LARGE_IMAGE_TXT);
 }
 
 void RegisterDiscordStateWriter() {
     GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameFrameUpdate>([]() {
         sFrameCounter++;
-        if (sFrameCounter >= WRITE_INTERVAL_FRAMES) {
+        if (sFrameCounter >= UPDATE_INTERVAL_FRAMES) {
             sFrameCounter = 0;
-            WriteGameState();
+            UpdateDiscordPresence();
         }
     });
 }
