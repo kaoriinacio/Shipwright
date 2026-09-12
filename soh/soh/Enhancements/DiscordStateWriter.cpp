@@ -10,7 +10,7 @@
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
-#include "Discord/DiscordIPC.h"
+#include "soh/Discord/DiscordIPC.h"
 
 extern "C" {
 #include <z64.h>
