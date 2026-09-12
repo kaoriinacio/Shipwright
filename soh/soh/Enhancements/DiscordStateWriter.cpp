@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/ShipInit.hpp"
 
 extern "C" {
 #include <z64.h>
@@ -185,3 +186,5 @@ void RegisterDiscordStateWriter() {
         }
     });
 }
+
+static RegisterShipInitFunc initFunc(RegisterDiscordStateWriter);
