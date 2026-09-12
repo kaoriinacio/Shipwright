@@ -375,6 +375,8 @@ add_subdirectory(soh)
 ################################################################################
 target_sources(soh PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Discord/DiscordIPC.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Discord/DiscordCVars.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Discord/DiscordMenu.cpp
 )
 target_include_directories(soh PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Discord
