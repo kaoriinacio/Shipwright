@@ -1,16 +1,13 @@
 #include <cstdio>
 #include <cstdint>
-#include <chrono>
+#include <ctime>
 #include <string>
-#include <cstdlib>
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
 #include "soh/Discord/DiscordIPC.h"
+
+#include <libultraship/bridge/consolevariablebridge.h>
 
 extern "C" {
 #include <z64.h>
@@ -19,13 +16,15 @@ extern "C" {
 extern PlayState* gPlayState;
 }
 
+#define CVAR_DISCORD(name) CVAR_ENHANCEMENT("Discord." name)
+
 static constexpr const char* DISCORD_CLIENT_ID = "1548247424072417290";
-static constexpr const char* LARGE_IMAGE_KEY   = "soh_icon"; // "" se não subiu o asset
+static constexpr const char* LARGE_IMAGE_KEY   = "soh_icon";
 static constexpr const char* LARGE_IMAGE_TXT   = "The Legend of Zelda: Ocarina of Time";
 
+// ---------- tabela de cenas (versão EN só, PT-BR vem na etapa 3) ----------
 static const char* GetSceneName(int16_t sceneNum) {
     switch (sceneNum) {
-        // Dungeons
         case SCENE_DEKU_TREE: return "Deku Tree";
         case SCENE_DODONGOS_CAVERN: return "Dodongo's Cavern";
         case SCENE_JABU_JABU: return "Jabu Jabu";
@@ -40,9 +39,6 @@ static const char* GetSceneName(int16_t sceneNum) {
         case SCENE_GERUDO_TRAINING_GROUND: return "Gerudo Training Ground";
         case SCENE_THIEVES_HIDEOUT: return "Thieves' Hideout";
         case SCENE_INSIDE_GANONS_CASTLE: return "Inside Ganon's Castle";
-        case SCENE_GANONS_TOWER_COLLAPSE_INTERIOR: return "Ganon's Tower Collapse Interior";
-        case SCENE_INSIDE_GANONS_CASTLE_COLLAPSE: return "Inside Ganon's Castle Collapse";
-        // Boss rooms
         case SCENE_DEKU_TREE_BOSS: return "Deku Tree Boss";
         case SCENE_DODONGOS_CAVERN_BOSS: return "Dodongo's Cavern Boss";
         case SCENE_JABU_JABU_BOSS: return "Jabu Jabu Boss";
@@ -53,8 +49,6 @@ static const char* GetSceneName(int16_t sceneNum) {
         case SCENE_SHADOW_TEMPLE_BOSS: return "Shadow Temple Boss";
         case SCENE_GANONDORF_BOSS: return "Ganondorf Boss";
         case SCENE_GANON_BOSS: return "Ganon Boss";
-        case SCENE_GANONS_TOWER_COLLAPSE_EXTERIOR: return "Ganon's Tower Collapse Exterior";
-        // Overworld
         case SCENE_HYRULE_FIELD: return "Hyrule Field";
         case SCENE_KAKARIKO_VILLAGE: return "Kakariko Village";
         case SCENE_GRAVEYARD: return "Graveyard";
@@ -74,107 +68,163 @@ static const char* GetSceneName(int16_t sceneNum) {
         case SCENE_DEATH_MOUNTAIN_CRATER: return "Death Mountain Crater";
         case SCENE_GORON_CITY: return "Goron City";
         case SCENE_LON_LON_RANCH: return "Lon Lon Ranch";
-        case SCENE_OUTSIDE_GANONS_CASTLE: return "Outside Ganon's Castle";
-        // Mercado / Kakariko / casas
-        case SCENE_MARKET_ENTRANCE_DAY: return "Market Entrance (Dia)";
-        case SCENE_MARKET_ENTRANCE_NIGHT: return "Market Entrance (Noite)";
-        case SCENE_MARKET_ENTRANCE_RUINS: return "Market Entrance (Ruínas)";
-        case SCENE_BACK_ALLEY_DAY: return "Back Alley (Dia)";
-        case SCENE_BACK_ALLEY_NIGHT: return "Back Alley (Noite)";
-        case SCENE_MARKET_DAY: return "Market (Dia)";
-        case SCENE_MARKET_NIGHT: return "Market (Noite)";
-        case SCENE_MARKET_RUINS: return "Market (Ruínas)";
-        case SCENE_TEMPLE_OF_TIME_EXTERIOR_DAY: return "Temple of Time Exterior (Dia)";
-        case SCENE_TEMPLE_OF_TIME_EXTERIOR_NIGHT: return "Temple of Time Exterior (Noite)";
-        case SCENE_TEMPLE_OF_TIME_EXTERIOR_RUINS: return "Temple of Time Exterior (Ruínas)";
-        case SCENE_KNOW_IT_ALL_BROS_HOUSE: return "Know-It-All Bros. House";
-        case SCENE_TWINS_HOUSE: return "Twin's House";
-        case SCENE_MIDOS_HOUSE: return "Mido's House";
-        case SCENE_SARIAS_HOUSE: return "Saria's House";
-        case SCENE_KAKARIKO_CENTER_GUEST_HOUSE: return "Kakariko Center Guest House";
-        case SCENE_BACK_ALLEY_HOUSE: return "Back Alley House";
-        case SCENE_BAZAAR: return "Bazaar";
-        case SCENE_KOKIRI_SHOP: return "Kokiri Shop";
-        case SCENE_GORON_SHOP: return "Goron Shop";
-        case SCENE_ZORA_SHOP: return "Zora Shop";
-        case SCENE_POTION_SHOP_KAKARIKO: return "Kakariko Potion Shop";
-        case SCENE_POTION_SHOP_MARKET: return "Market Potion Shop";
-        case SCENE_POTION_SHOP_GRANNY: return "Granny's Potion Shop";
-        case SCENE_BOMBCHU_SHOP: return "Bombchu Shop";
-        case SCENE_HAPPY_MASK_SHOP: return "Happy Mask Shop";
-        case SCENE_LINKS_HOUSE: return "Link's House";
-        case SCENE_DOG_LADY_HOUSE: return "Dog Lady's House";
-        case SCENE_STABLE: return "Stable";
-        case SCENE_IMPAS_HOUSE: return "Impa's House";
-        case SCENE_LAKESIDE_LABORATORY: return "Lake Hylia Laboratory";
-        case SCENE_CARPENTERS_TENT: return "Carpenter's Tent";
-        case SCENE_GRAVEKEEPERS_HUT: return "Gravekeeper's Hut";
-        case SCENE_TREASURE_BOX_SHOP: return "Treasure Box Shop";
-        case SCENE_HOUSE_OF_SKULLTULA: return "House of Skulltula";
-        case SCENE_LON_LON_BUILDINGS: return "Lon Lon Buildings";
-        case SCENE_MARKET_GUARD_HOUSE: return "Market Guard House";
-        // Fontes das fadas / covas / templo
-        case SCENE_GREAT_FAIRYS_FOUNTAIN_MAGIC: return "Great Fairy's Fountain (Magic)";
-        case SCENE_FAIRYS_FOUNTAIN: return "Fairy's Fountain";
-        case SCENE_GREAT_FAIRYS_FOUNTAIN_SPELLS: return "Great Fairy's Fountain (Spells)";
-        case SCENE_GROTTOS: return "Grottos";
-        case SCENE_REDEAD_GRAVE: return "Redead Grave";
-        case SCENE_GRAVE_WITH_FAIRYS_FOUNTAIN: return "Grave with Fairy's Fountain";
-        case SCENE_ROYAL_FAMILYS_TOMB: return "Royal Family's Tomb";
-        case SCENE_SHOOTING_GALLERY: return "Shooting Gallery";
         case SCENE_TEMPLE_OF_TIME: return "Temple of Time";
         case SCENE_CHAMBER_OF_THE_SAGES: return "Chamber of the Sages";
-        case SCENE_WINDMILL_AND_DAMPES_GRAVE: return "Windmill and Dampé's Grave";
         case SCENE_FISHING_POND: return "Fishing Pond";
-        case SCENE_BOMBCHU_BOWLING_ALLEY: return "Bombchu Bowling Alley";
-        case SCENE_CASTLE_COURTYARD_GUARDS_DAY: return "Castle Courtyard Guards (Dia)";
-        case SCENE_CASTLE_COURTYARD_GUARDS_NIGHT: return "Castle Courtyard Guards (Noite)";
-        case SCENE_CASTLE_COURTYARD_ZELDA: return "Castle Courtyard Zelda";
-        case SCENE_CUTSCENE_MAP: return "Cutscene Map";
-        default: return "Área desconhecida";
+        default: return "Unknown Area";
     }
 }
 
+// ---------- formatação ----------
+static std::string FormatSessionTime() {
+    static const time_t start = std::time(nullptr);
+    long secs = (long)(std::time(nullptr) - start);
+    long h = secs / 3600;
+    long m = (secs % 3600) / 60;
+    char buf[32];
+    if (h > 0) std::snprintf(buf, sizeof(buf), "%ldh %02ldmin", h, m);
+    else       std::snprintf(buf, sizeof(buf), "%ldmin", m);
+    return std::string(buf);
+}
+
+static std::string FormatGameTime() {
+    uint32_t t = gSaveContext.dayTime;
+    int totalMin = (int)((uint64_t)t * 24 * 60 / 0x10000);
+    int h = totalMin / 60;
+    int m = totalMin % 60;
+    const char* period;
+    if (h >= 6 && h < 18)       period = "Day";
+    else if (h >= 18 && h < 21) period = "Dusk";
+    else                        period = "Night";
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "%s %02d:%02d", period, h, m);
+    return std::string(buf);
+}
+
+static const char* SwordName() {
+    switch (gSaveContext.equips.sword) {
+        case 0: return "None";
+        case 1: return "Kokiri Sword";
+        case 2: return "Master Sword";
+        case 3: return "Biggoron's Sword";
+        default: return "?";
+    }
+}
+
+static const char* BootsName() {
+    switch (gSaveContext.equips.boots) {
+        case 0: return "None";
+        case 1: return "Kokiri Boots";
+        case 2: return "Iron Boots";
+        case 3: return "Hover Boots";
+        default: return "?";
+    }
+}
+
+static void CountQuest(int& medallions, int& stones) {
+    uint32_t q = gSaveContext.inventory.questItems;
+    medallions = 0;
+    for (int i = 0; i < 6; i++) if (q & (1 << i)) medallions++;
+    stones = 0;
+    for (int i = 18; i <= 20; i++) if (q & (1 << i)) stones++;
+}
+
+// ---------- payload ----------
+static void BuildPresence(std::string& outDetails, std::string& outState) {
+    if (gPlayState == nullptr) {
+        outDetails = "In menus";
+        outState = "";
+        return;
+    }
+
+    std::string details;
+    if (CVarGetInteger(CVAR_DISCORD("ShowArea"), 1)) {
+        const char* scene = GetSceneName(gPlayState->sceneNum);
+        if (CVarGetInteger(CVAR_DISCORD("ShowRoom"), 0) &&
+            gPlayState->roomCtx.curRoom.num >= 0) {
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "Exploring: %s - Room %d",
+                scene, gPlayState->roomCtx.curRoom.num);
+            details = buf;
+        } else {
+            details = std::string("Exploring: ") + scene;
+        }
+    } else {
+        details = "Playing Ocarina of Time";
+    }
+    outDetails = details;
+
+    std::string state;
+    auto add = [&](const std::string& s) {
+        if (s.empty()) return;
+        if (!state.empty()) state += " • ";
+        state += s;
+    };
+
+    if (CVarGetInteger(CVAR_DISCORD("ShowAge"), 1)) {
+        add("Adult");
+    }
+    if (CVarGetInteger(CVAR_DISCORD("ShowHealth"), 1)) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%d hearts", gSaveContext.health / 16);
+        add(buf);
+    }
+    if (CVarGetInteger(CVAR_DISCORD("ShowRupees"), 0)) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%d rupees", gSaveContext.rupees);
+        add(buf);
+    }
+    if (CVarGetInteger(CVAR_DISCORD("ShowProgress"), 1)) {
+        int med, stones;
+        CountQuest(med, stones);
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Medals %d/6, Stones %d/3", med, stones);
+        add(buf);
+    }
+    if (CVarGetInteger(CVAR_DISCORD("ShowEquipment"), 0)) {
+        add(SwordName());
+        add(BootsName());
+    }
+    if (CVarGetInteger(CVAR_DISCORD("ShowGameTime"), 1)) {
+        add(FormatGameTime());
+    }
+    if (CVarGetInteger(CVAR_DISCORD("ShowPlayTime"), 1)) {
+        add(FormatSessionTime());
+    }
+
+    outState = state;
+}
+
+// ---------- loop ----------
 static uint32_t sFrameCounter = 0;
-static const uint32_t UPDATE_INTERVAL_FRAMES = 30; // ~1x/seg a 30fps
 static bool s_discordInitialized = false;
-static const char* s_lastScene = nullptr;
-static int s_lastHearts = -1;
-static int s_lastAge = -1;
 
 static void UpdateDiscordPresence() {
+    if (!CVarGetInteger(CVAR_DISCORD("Enabled"), 1)) {
+        if (s_discordInitialized) {
+            DiscordIPC::Shutdown();
+            s_discordInitialized = false;
+        }
+        return;
+    }
+
     if (!s_discordInitialized) {
         DiscordIPC::Init(DISCORD_CLIENT_ID);
         s_discordInitialized = true;
     }
-
-    // ping a cada 15s (o Discord derruba se ficar muito tempo sem ping)
     DiscordIPC::Tick();
 
-    if (gPlayState == nullptr) return;
-
-    int sceneNum = gPlayState->sceneNum;
-    const char* sceneName = GetSceneName(sceneNum);
-    int hearts = gSaveContext.health / 16;
-    int age = (int)gSaveContext.linkAge;
-
-    // só manda update se algo mudou (evita rate limit)
-    if (sceneName == s_lastScene && hearts == s_lastHearts && age == s_lastAge) return;
-    s_lastScene = sceneName;
-    s_lastHearts = hearts;
-    s_lastAge = age;
-
-    std::string details = std::string("Explorando: ") + sceneName;
-    std::string stateStr = std::string(age == LINK_AGE_CHILD ? "Link Crianca" : "Link Adulto")
-                         + " • " + std::to_string(hearts) + " coracoes";
-
-    DiscordIPC::Update(details, stateStr, LARGE_IMAGE_KEY, LARGE_IMAGE_TXT);
+    std::string details, state;
+    BuildPresence(details, state);
+    DiscordIPC::Update(details, state, LARGE_IMAGE_KEY, LARGE_IMAGE_TXT);
 }
 
 void RegisterDiscordStateWriter() {
     GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameFrameUpdate>([]() {
         sFrameCounter++;
-        if (sFrameCounter >= UPDATE_INTERVAL_FRAMES) {
+        int interval = CVarGetInteger(CVAR_DISCORD("UpdateInterval"), 30);
+        if (interval < 10) interval = 10;
+        if (sFrameCounter >= (uint32_t)interval) {
             sFrameCounter = 0;
             UpdateDiscordPresence();
         }
