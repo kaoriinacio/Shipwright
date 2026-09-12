@@ -4,6 +4,10 @@
 #include <string>
 #include <cstdlib>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/ShipInit.hpp"
 
@@ -130,9 +134,18 @@ static uint32_t sFrameCounter = 0;
 static const uint32_t WRITE_INTERVAL_FRAMES = 30; // ~1x/seg a 30fps
 
 static std::string GetStateFilePath() {
-    const char* appData = std::getenv("APPDATA");
-    std::string base = appData ? appData : ".";
-    return base + "\\Ship of Harkinian\\game_state.json";
+    // No Windows o SoH é portátil: os arquivos de config/otr ficam do lado
+    // do soh.exe, não em %APPDATA%. Escrevemos game_state.json ali também.
+#ifdef _WIN32
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::string path(exePath);
+    size_t lastSlash = path.find_last_of("\\/");
+    std::string dir = (lastSlash != std::string::npos) ? path.substr(0, lastSlash) : ".";
+    return dir + "\\game_state.json";
+#else
+    return "./game_state.json";
+#endif
 }
 
 static void WriteGameState() {
