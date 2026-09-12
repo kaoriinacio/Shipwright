@@ -370,6 +370,16 @@ quiet_target(libultraship "${WARNING_OVERRIDE}")
 target_compile_definitions(libultraship PUBLIC INCLUDE_MPQ_SUPPORT)
 add_subdirectory(soh)
 
+################################################################################
+# Discord Rich Presence nativo (IPC raw, sem SDK, sem DLL extra)
+################################################################################
+target_sources(soh PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Discord/DiscordIPC.cpp
+)
+target_include_directories(soh PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Discord
+)
+
 set_property(TARGET soh PROPERTY APPIMAGE_DESKTOP_FILE_TERMINAL YES)
 set_property(TARGET soh PROPERTY APPIMAGE_DESKTOP_FILE "${CMAKE_SOURCE_DIR}/scripts/linux/appimage/soh.desktop")
 set_property(TARGET soh PROPERTY APPIMAGE_ICON_FILE "${CMAKE_BINARY_DIR}/sohIcon.png")
