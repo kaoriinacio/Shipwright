@@ -391,6 +391,16 @@ target_include_directories(soh PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Enhancements/Stats
 )
 
+################################################################################
+# Photo Mode (câmera customizada para screenshots)
+################################################################################
+target_sources(soh PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Enhancements/camera/PhotoMode.cpp
+)
+target_include_directories(soh PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Enhancements/camera
+)
+
 set_property(TARGET soh PROPERTY APPIMAGE_DESKTOP_FILE_TERMINAL YES)
 set_property(TARGET soh PROPERTY APPIMAGE_DESKTOP_FILE "${CMAKE_SOURCE_DIR}/scripts/linux/appimage/soh.desktop")
 set_property(TARGET soh PROPERTY APPIMAGE_ICON_FILE "${CMAKE_BINARY_DIR}/sohIcon.png")
