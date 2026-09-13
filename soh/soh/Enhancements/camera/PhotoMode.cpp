@@ -44,7 +44,7 @@ static f32 PhotoMode_LERPCeilF(f32 target, f32 cur, f32 stepScale, f32 minDiff) 
 static s16 PhotoMode_LERPCeilS(s16 target, s16 cur, f32 stepScale, s16 minDiff) {
     s16 diff = (s16)(target - cur);
     if (ABS(diff) >= minDiff) {
-        return cur + (s16)(diff * stepScale);
+        return (s16)(cur + (s16)(diff * stepScale));
     }
     return target;
 }
@@ -96,12 +96,12 @@ s32 Camera_PhotoMode(Camera* camera) {
 
     VecSph moveDir;
     moveDir.r = speed * moveY;
-    moveDir.yaw = camera->play->camX;
+    moveDir.yaw = (s16)camera->play->camX;              // <-- cast explícito
     moveDir.pitch = 0;
     PhotoMode_Vec3fVecSphGeoAdd(&sPhotoEye, &sPhotoEye, &moveDir);
 
     moveDir.r = speed * moveX;
-    moveDir.yaw = camera->play->camX + 0x4000;
+    moveDir.yaw = (s16)(camera->play->camX + 0x4000);   // <-- cast explícito
     moveDir.pitch = 0;
     PhotoMode_Vec3fVecSphGeoAdd(&sPhotoEye, &sPhotoEye, &moveDir);
 
@@ -117,8 +117,8 @@ s32 Camera_PhotoMode(Camera* camera) {
 
     // ========== OLHAR (at) ==========
     eyeAdjustment.r = 50.0f;
-    eyeAdjustment.yaw = camera->play->camX;
-    eyeAdjustment.pitch = camera->play->camY;
+    eyeAdjustment.yaw   = (s16)camera->play->camX;      // <-- cast explícito
+    eyeAdjustment.pitch = (s16)camera->play->camY;      // <-- cast explícito
     PhotoMode_Vec3fVecSphGeoAdd(at, eye, &eyeAdjustment);
 
     // ========== FOV & ROLL ==========
@@ -128,12 +128,9 @@ s32 Camera_PhotoMode(Camera* camera) {
 
     // ========== HIDE HUD ==========
     // `sCameraInterfaceFlags` é `static` dentro de z_camera.c e não pode ser
-    // setado daqui. Para esconder o HUD, precisa passar por uma API pública
-    // (ex.: gSaveContext.hudVisibility) ou expor um setter no z_camera.c.
-    // Bloco desativado para o arquivo compilar.
-    //
+    // setado daqui. Para esconder o HUD de verdade, use gSaveContext.hudVisibility.
     // if (CVarGetInteger(CVAR_PHOTOMODE("HideHud"), 1)) {
-    //     sCameraInterfaceFlags = 0xF000;
+    //     gSaveContext.hudVisibility = 0xF000;
     // }
 
     return 1;
