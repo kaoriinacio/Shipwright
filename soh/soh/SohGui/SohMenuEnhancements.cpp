@@ -10,6 +10,7 @@
 #include "soh/Enhancements/Restorations/GetItemManipulation.h"
 #include "soh/Enhancements/randomizer/SeedContext.h"
 #include "soh/Enhancements/Stats/PlayerStats.h"
+#include "soh/Enhancements/camera/PhotoMode.h"
 #include <ship/Context.h>
 #include <soh/ResourceManagerHelpers.h>
 
@@ -2212,6 +2213,51 @@ void SohMenu::AddMenuEnhancements() {
             .Callback([](WidgetInfo& info) { TimeDisplayUpdateDisplayOptions(); });
     }
 
+    // ============================================================
+    // Photo Mode
+    // ============================================================
+    path.sidebarName = "Camera";
+    AddSidebarEntry("Enhancements", path.sidebarName, 1);
+    path.column = SECTION_COLUMN_1;
+
+    AddWidget(path, "Photo Mode", WIDGET_SEPARATOR_TEXT);
+
+    AddWidget(path, "Enable Photo Mode", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("PhotoMode.Enabled"))
+        .Options(CheckboxOptions().Tooltip(
+            "Ativa o Photo Mode.\n"
+            "Right Stick / Mouse: olhar em volta\n"
+            "Left Stick: mover a câmera (você fica parado)\n"
+            "C-Up / C-Down: subir / descer"));
+
+    AddWidget(path, "Hide HUD", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("PhotoMode.HideHud"))
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0);
+        });
+
+    AddWidget(path, "Sensitivity: %.2f", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_ENHANCEMENT("PhotoMode.Sensitivity"))
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0);
+        })
+        .Options(FloatSliderOptions().Min(0.1f).Max(5.0f).DefaultValue(1.0f).Format("%.2f"));
+
+    AddWidget(path, "Move Speed: %.2f", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_ENHANCEMENT("PhotoMode.MoveSpeed"))
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0);
+        })
+        .Options(FloatSliderOptions().Min(1.0f).Max(20.0f).DefaultValue(5.0f).Format("%.2f"));
+
+    AddWidget(path, "FOV: %.1f", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_ENHANCEMENT("PhotoMode.Fov"))
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0);
+        })
+        .Options(FloatSliderOptions().Min(20.0f).Max(120.0f).DefaultValue(65.0f).Format("%.1f"));
+
+    
     // ============================================================
     // Discord Rich Presence
     // ============================================================
