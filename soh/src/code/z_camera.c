@@ -7537,6 +7537,13 @@ Vec3s Camera_Update(Camera* camera) {
         osSyncPrintf("camera: in %x\n", camera);
     }
 
+    // Æ BOT: Photo Mode — força status pra ACTIVE pra não sair cedo
+    // do Camera_Update durante ocarina/cutscenes.
+    if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0) && camera->thisIdx == CAM_ID_MAIN &&
+        (camera->status == CAM_STAT_CUT || camera->status == CAM_STAT_WAIT)) {
+        camera->status = CAM_STAT_ACTIVE;
+    }
+
     if (camera->status == CAM_STAT_CUT) {
         if (R_DBG_CAM_UPDATE) {
             osSyncPrintf("camera: cut out %x\n", camera);
@@ -7632,9 +7639,9 @@ Vec3s Camera_Update(Camera* camera) {
         if (!sPhotoWasEnabled) {
             Camera_PhotoMode_Init(camera);
             sPhotoWasEnabled = true;
-            sCameraInterfaceFlags = 0xF000;   // <-- ADICIONA ESTA LINHA
         }
         Camera_PhotoMode(camera);
+        sCameraInterfaceFlags = 0xF000;   // <-- aqui, roda todo frame
     } else {
         if (sPhotoWasEnabled) {
             sPhotoWasEnabled = false;
