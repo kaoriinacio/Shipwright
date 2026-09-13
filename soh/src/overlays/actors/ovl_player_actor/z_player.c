@@ -12194,18 +12194,6 @@ void Player_Update(Actor* thisx, PlayState* play) {
     s32 dogParams;
     s32 pad;
     Input input;
-
-       // Æ BOT: Photo Mode - zera input de movimento
-    if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
-        this->actor.speedXZ = 0.0f;
-        this->skelAnime.movementFlags = 0;
-        // Zera input de movimento direcional
-        input.cur.stick_x = 0;
-        input.cur.stick_y = 0;
-        input.rel.stick_x = 0;
-        input.rel.stick_y = 0;
-        // NÃO retorna — deixa o resto do Update rodar (anima, colide, etc)
-    }
     
     if (Player_UpdateNoclip(this, play)) {
         if (gSaveContext.dogParams < 0) {
@@ -12247,6 +12235,16 @@ void Player_Update(Actor* thisx, PlayState* play) {
             }
         }
 
+// Æ BOT: Photo Mode - zera input de movimento
+    if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
+        // Zera input de movimento direcional
+        input.cur.stick_x = 0;
+        input.cur.stick_y = 0;
+        input.rel.stick_x = 0;
+        input.rel.stick_y = 0;
+        // NÃO retorna — deixa o resto do Update rodar (anima, colide, etc)
+    }
+        
         if (CVarGetFloat(CVAR_CHEAT("SpeedModifier.Value"), 1.0f) != 1.0f &&
             CVarGetInteger(CVAR_CHEAT("SpeedModifier.SpeedToggle"), 0)) {
             const s32 mod1Mask = CVarGetInteger(CVAR_CHEAT("SpeedModifier.Btn"), BTN_CUSTOM_MODIFIER1);
