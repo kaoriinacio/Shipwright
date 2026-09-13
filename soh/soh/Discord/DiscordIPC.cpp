@@ -1,16 +1,13 @@
 #include "DiscordIPC.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#error "DiscordIPC so implementado pra Windows por enquanto"
-#endif
-
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <string>
+
+#ifdef _WIN32
+#include <windows.h>
 
 namespace DiscordIPC {
 
@@ -212,3 +209,21 @@ void Shutdown() {
 }
 
 } // namespace DiscordIPC
+
+#else
+// ---------- STUBS PARA MACOS/LINUX ----------
+// Discord IPC nessas plataformas usa Unix domain sockets em vez de named
+// pipes do Windows. Não implementado ainda: essas funções ficam vazias,
+// o jogo compila e roda normal, só sem a Rich Presence.
+
+namespace DiscordIPC {
+
+void Init(const std::string&) {}
+void Update(const std::string&, const std::string&,
+            const std::string&, const std::string&) {}
+void Tick() {}
+void Shutdown() {}
+
+} // namespace DiscordIPC
+
+#endif // _WIN32
