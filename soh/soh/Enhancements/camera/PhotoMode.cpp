@@ -63,7 +63,6 @@ void Camera_PhotoMode_Init(Camera* camera) {
 }
 
 s32 Camera_PhotoMode(Camera* camera) {
-    camera->fov = 10.0f;   // <-- DEBUG: se o FOV ficar fechado, esta função está rodando
 
     if (!sPhotoInitialized) {
         Camera_PhotoMode_Init(camera);
