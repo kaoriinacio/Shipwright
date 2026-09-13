@@ -7632,6 +7632,7 @@ Vec3s Camera_Update(Camera* camera) {
         if (!sPhotoWasEnabled) {
             Camera_PhotoMode_Init(camera);
             sPhotoWasEnabled = true;
+            sCameraInterfaceFlags = 0xF000;   // <-- ADICIONA ESTA LINHA
         }
         Camera_PhotoMode(camera);
     } else {
@@ -7647,7 +7648,11 @@ Vec3s Camera_Update(Camera* camera) {
     }
 
     if (camera->status == CAM_STAT_ACTIVE) {
-        if ((gSaveContext.gameMode != GAMEMODE_NORMAL) && (gSaveContext.gameMode != GAMEMODE_END_CREDITS)) {
+        if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0) && camera->thisIdx == CAM_ID_MAIN) {
+            // Æ BOT: Photo Mode - mantém HUD escondido mesmo perto de NPC / em cutscene
+            sCameraInterfaceFlags = 0xF000;
+            Camera_UpdateInterface(sCameraInterfaceFlags);
+        } else if ((gSaveContext.gameMode != GAMEMODE_NORMAL) && (gSaveContext.gameMode != GAMEMODE_END_CREDITS)) {
             sCameraInterfaceFlags = 0;
             Camera_UpdateInterface(sCameraInterfaceFlags);
         } else if ((D_8011D3F0 != 0) && (camera->thisIdx == CAM_ID_MAIN)) {
