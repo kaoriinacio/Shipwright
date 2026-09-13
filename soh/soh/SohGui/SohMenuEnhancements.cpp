@@ -9,6 +9,7 @@
 #include <soh/Enhancements/TimeDisplay/TimeDisplay.h>
 #include "soh/Enhancements/Restorations/GetItemManipulation.h"
 #include "soh/Enhancements/randomizer/SeedContext.h"
+#include "soh/Enhancements/Stats/PlayerStats.h"
 #include <ship/Context.h>
 #include <soh/ResourceManagerHelpers.h>
 
@@ -2317,6 +2318,66 @@ void SohMenu::AddMenuEnhancements() {
                      .Format("%d frames")
                      .Tooltip("How often the Discord presence updates (in frames). Lower = more responsive but "
                               "more Discord API calls."));
+
+    // ============================================================
+    // Stats
+    // ============================================================
+    path.sidebarName = "Stats";
+    AddSidebarEntry("Enhancements", path.sidebarName, 1);
+    path.column = SECTION_COLUMN_1;
+
+    AddWidget(path, "Statistics", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path,
+        "Stats are saved automatically to soh_stats.json next to soh.exe.",
+        WIDGET_TEXT);
+
+    AddWidget(path, "Time Played", WIDGET_TEXT)
+        .PreFunc([](WidgetInfo& info) {
+            static char buf[64];
+            std::snprintf(buf, sizeof(buf), "Total: %s",
+                PlayerStats::FormatDuration(PlayerStats::TotalSecondsLive()).c_str());
+            info.name = buf;
+        });
+
+    AddWidget(path, "Deaths", WIDGET_TEXT)
+        .PreFunc([](WidgetInfo& info) {
+            static char buf[32];
+            std::snprintf(buf, sizeof(buf), "Deaths: %u",
+                PlayerStats::Get().deaths);
+            info.name = buf;
+        });
+
+    AddWidget(path, "Best Streak", WIDGET_TEXT)
+        .PreFunc([](WidgetInfo& info) {
+            static char buf[64];
+            std::snprintf(buf, sizeof(buf), "Best streak without dying: %s",
+                PlayerStats::FormatDuration(PlayerStats::Get().bestStreakSecs).c_str());
+            info.name = buf;
+        });
+
+    AddWidget(path, "Rupees", WIDGET_TEXT)
+        .PreFunc([](WidgetInfo& info) {
+            static char buf[64];
+            std::snprintf(buf, sizeof(buf), "Earned: %u  |  Spent: %u",
+                PlayerStats::Get().rupeesEarned,
+                PlayerStats::Get().rupeesSpent);
+            info.name = buf;
+        });
+
+    AddWidget(path, "First Played", WIDGET_TEXT)
+        .PreFunc([](WidgetInfo& info) {
+            static char buf[64];
+            std::snprintf(buf, sizeof(buf), "First played: %s",
+                PlayerStats::FormatDate(PlayerStats::Get().firstPlayed).c_str());
+            info.name = buf;
+        });
+
+    AddWidget(path, "Reset Stats", WIDGET_BUTTON)
+        .Options(ButtonOptions().Size(Sizes::Inline).Tooltip(
+            "Erases all tracked stats. Cannot be undone."))
+        .Callback([](WidgetInfo& info) {
+            PlayerStats::Reset();
+        });
 }
 
 } // namespace SohGui
