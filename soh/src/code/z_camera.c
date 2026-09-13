@@ -16,6 +16,10 @@ s32 Camera_RequestModeImpl(Camera* camera, s16 requestedMode, u8 forceModeChange
 s32 Camera_QRegInit(void);
 s32 Camera_UpdateWater(Camera* camera);
 
+// Æ BOT: Photo Mode
+extern s32 Camera_PhotoMode(Camera* camera);
+extern void Camera_PhotoMode_Init(Camera* camera);
+
 #define RELOAD_PARAMS \
     (camera->animState == 0 || camera->animState == 0xA || camera->animState == 0x14 || R_RELOAD_CAM_PARAMS)
 
@@ -7622,11 +7626,24 @@ Vec3s Camera_Update(Camera* camera) {
                      sCameraSettings[camera->setting].cameraModes[camera->mode].funcIdx, camera->unk_14C);
     }
 
-    if (sOOBTimer < 200) {
-        sCameraFunctions[sCameraSettings[camera->setting].cameraModes[camera->mode].funcIdx](camera);
-    } else if (camera->player != NULL) {
-        OLib_Vec3fDiffToVecSphGeo(&eyeAtAngle, &camera->at, &camera->eye);
-        Camera_CalcAtDefault(camera, &eyeAtAngle, 0.0f, 0);
+        // Æ BOT: Photo Mode intercepta antes da câmera normal
+    static bool sPhotoWasEnabled = false;
+    if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0) && camera->thisIdx == CAM_ID_MAIN) {
+        if (!sPhotoWasEnabled) {
+            Camera_PhotoMode_Init(camera);
+            sPhotoWasEnabled = true;
+        }
+        Camera_PhotoMode(camera);
+    } else {
+        if (sPhotoWasEnabled) {
+            sPhotoWasEnabled = false;
+        }
+        if (sOOBTimer < 200) {
+            sCameraFunctions[sCameraSettings[camera->setting].cameraModes[camera->mode].funcIdx](camera);
+        } else if (camera->player != NULL) {
+            OLib_Vec3fDiffToVecSphGeo(&eyeAtAngle, &camera->at, &camera->eye);
+            Camera_CalcAtDefault(camera, &eyeAtAngle, 0.0f, 0);
+        }
     }
 
     if (camera->status == CAM_STAT_ACTIVE) {
