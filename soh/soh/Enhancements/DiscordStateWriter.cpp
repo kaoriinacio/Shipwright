@@ -19,7 +19,7 @@ extern PlayState* gPlayState;
 #define CVAR_DISCORD(name) CVAR_ENHANCEMENT("Discord." name)
 
 static constexpr const char* DISCORD_CLIENT_ID = "1548247424072417290";
-static constexpr const char* LARGE_IMAGE_KEY   = "";
+static constexpr const char* LARGE_IMAGE_KEY   = "soh_icon";
 static constexpr const char* LARGE_IMAGE_TXT   = "The Legend of Zelda: Ocarina of Time";
 
 // ---------- i18n da presence ----------
@@ -34,40 +34,40 @@ static const char* PickLang(const char* en, const char* ptbr) {
 static const char* GetSceneName(int16_t sceneNum) {
     switch (sceneNum) {
         // Dungeons
-        case SCENE_DEKU_TREE: return PickLang("Deku Tree", "Arvore Deku");
+        case SCENE_DEKU_TREE: return PickLang("Deku Tree", "Árvore Deku");
         case SCENE_DODONGOS_CAVERN: return PickLang("Dodongo's Cavern", "Caverna Dodongo");
         case SCENE_JABU_JABU: return PickLang("Jabu Jabu", "Barriga do Jabu-Jabu");
         case SCENE_FOREST_TEMPLE: return PickLang("Forest Temple", "Templo da Floresta");
         case SCENE_FIRE_TEMPLE: return PickLang("Fire Temple", "Templo do Fogo");
-        case SCENE_WATER_TEMPLE: return PickLang("Water Temple", "Templo da Agua");
-        case SCENE_SPIRIT_TEMPLE: return PickLang("Spirit Temple", "Templo do Espirito");
+        case SCENE_WATER_TEMPLE: return PickLang("Water Temple", "Templo da Água");
+        case SCENE_SPIRIT_TEMPLE: return PickLang("Spirit Temple", "Templo do Espírito");
         case SCENE_SHADOW_TEMPLE: return PickLang("Shadow Temple", "Templo das Sombras");
-        case SCENE_BOTTOM_OF_THE_WELL: return PickLang("Bottom of the Well", "Fundo do Poco");
+        case SCENE_BOTTOM_OF_THE_WELL: return PickLang("Bottom of the Well", "Fundo do Poço");
         case SCENE_ICE_CAVERN: return PickLang("Ice Cavern", "Caverna de Gelo");
         case SCENE_GANONS_TOWER: return PickLang("Ganon's Tower", "Torre de Ganon");
         case SCENE_GERUDO_TRAINING_GROUND: return PickLang("Gerudo Training Ground", "Campo de Treinamento Gerudo");
-        case SCENE_THIEVES_HIDEOUT: return PickLang("Thieves' Hideout", "Esconderijo dos Ladroes");
+        case SCENE_THIEVES_HIDEOUT: return PickLang("Thieves' Hideout", "Esconderijo dos Ladrões");
         case SCENE_INSIDE_GANONS_CASTLE: return PickLang("Inside Ganon's Castle", "Castelo de Ganon (Interior)");
         // Boss rooms
-        case SCENE_DEKU_TREE_BOSS: return PickLang("Deku Tree Boss", "Chefe da Arvore Deku");
+        case SCENE_DEKU_TREE_BOSS: return PickLang("Deku Tree Boss", "Chefe da Árvore Deku");
         case SCENE_DODONGOS_CAVERN_BOSS: return PickLang("Dodongo's Cavern Boss", "Chefe da Caverna Dodongo");
         case SCENE_JABU_JABU_BOSS: return PickLang("Jabu Jabu Boss", "Chefe do Jabu-Jabu");
         case SCENE_FOREST_TEMPLE_BOSS: return PickLang("Forest Temple Boss", "Chefe do Templo da Floresta");
         case SCENE_FIRE_TEMPLE_BOSS: return PickLang("Fire Temple Boss", "Chefe do Templo do Fogo");
-        case SCENE_WATER_TEMPLE_BOSS: return PickLang("Water Temple Boss", "Chefe do Templo da Agua");
-        case SCENE_SPIRIT_TEMPLE_BOSS: return PickLang("Spirit Temple Boss", "Chefe do Templo do Espirito");
+        case SCENE_WATER_TEMPLE_BOSS: return PickLang("Water Temple Boss", "Chefe do Templo da Água");
+        case SCENE_SPIRIT_TEMPLE_BOSS: return PickLang("Spirit Temple Boss", "Chefe do Templo do Espírito");
         case SCENE_SHADOW_TEMPLE_BOSS: return PickLang("Shadow Temple Boss", "Chefe do Templo das Sombras");
         case SCENE_GANONDORF_BOSS: return PickLang("Ganondorf Boss", "Chefe Ganondorf");
         case SCENE_GANON_BOSS: return PickLang("Ganon Boss", "Chefe Ganon");
         // Overworld
         case SCENE_HYRULE_FIELD: return PickLang("Hyrule Field", "Campo de Hyrule");
         case SCENE_KAKARIKO_VILLAGE: return PickLang("Kakariko Village", "Vila Kakariko");
-        case SCENE_GRAVEYARD: return PickLang("Graveyard", "Cemiterio");
+        case SCENE_GRAVEYARD: return PickLang("Graveyard", "Cemitério");
         case SCENE_ZORAS_RIVER: return PickLang("Zora's River", "Rio Zora");
         case SCENE_KOKIRI_FOREST: return PickLang("Kokiri Forest", "Floresta Kokiri");
         case SCENE_SACRED_FOREST_MEADOW: return PickLang("Sacred Forest Meadow", "Clareira Sagrada");
         case SCENE_LAKE_HYLIA: return PickLang("Lake Hylia", "Lago Hylia");
-        case SCENE_ZORAS_DOMAIN: return PickLang("Zora's Domain", "Dominio Zora");
+        case SCENE_ZORAS_DOMAIN: return PickLang("Zora's Domain", "Domínio Zora");
         case SCENE_ZORAS_FOUNTAIN: return PickLang("Zora's Fountain", "Fonte Zora");
         case SCENE_GERUDO_VALLEY: return PickLang("Gerudo Valley", "Vale Gerudo");
         case SCENE_LOST_WOODS: return PickLang("Lost Woods", "Bosque Perdido");
@@ -80,9 +80,9 @@ static const char* GetSceneName(int16_t sceneNum) {
         case SCENE_GORON_CITY: return PickLang("Goron City", "Cidade Goron");
         case SCENE_LON_LON_RANCH: return PickLang("Lon Lon Ranch", "Rancho Lon Lon");
         case SCENE_TEMPLE_OF_TIME: return PickLang("Temple of Time", "Templo do Tempo");
-        case SCENE_CHAMBER_OF_THE_SAGES: return PickLang("Chamber of the Sages", "Camara dos Sabios");
+        case SCENE_CHAMBER_OF_THE_SAGES: return PickLang("Chamber of the Sages", "Câmara dos Sábios");
         case SCENE_FISHING_POND: return PickLang("Fishing Pond", "Lago de Pesca");
-        default: return PickLang("Unknown Area", "Area Desconhecida");
+        default: return PickLang("Unknown Area", "Área Desconhecida");
     }
 }
 
@@ -178,7 +178,7 @@ static void BuildPresence(std::string& outDetails, std::string& outState) {
     }
     if (CVarGetInteger(CVAR_DISCORD("ShowHealth"), 1)) {
         char buf[32];
-        std::snprintf(buf, sizeof(buf), PickLang("%d hearts", "%d coracoes"), gSaveContext.health / 16);
+        std::snprintf(buf, sizeof(buf), PickLang("%d hearts", "%d corações"), gSaveContext.health / 16);
         add(buf);
     }
     if (CVarGetInteger(CVAR_DISCORD("ShowRupees"), 0)) {
@@ -191,7 +191,7 @@ static void BuildPresence(std::string& outDetails, std::string& outState) {
         CountQuest(med, stones);
         char buf[64];
         std::snprintf(buf, sizeof(buf),
-            PickLang("Medals %d/6, Stones %d/3", "Medalhoes %d/6, Pedras %d/3"),
+            PickLang("Medals %d/6, Stones %d/3", "Medalhões %d/6, Pedras %d/3"),
             med, stones);
         add(buf);
     }
