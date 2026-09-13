@@ -1290,6 +1290,11 @@ skip:
 }
 
 void Play_DrawOverlayElements(PlayState* play) {
+    // Æ BOT: Photo Mode — não desenha nenhum overlay (HUD, diálogo, notas de ocarina)
+    if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
+        return;
+    }
+
     if ((play->pauseCtx.state != 0) || (play->pauseCtx.debugState != 0)) {
         KaleidoScopeCall_Draw(play);
     }
