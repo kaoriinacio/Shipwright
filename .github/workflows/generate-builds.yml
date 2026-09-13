@@ -1,7 +1,13 @@
 name: generate-builds
 on:
   push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
   pull_request:
+permissions:
+  contents: write
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -78,13 +84,32 @@ jobs:
 
         mv _packages/*.dmg SoH.dmg
         mv README.md readme.txt
-    - name: Upload build
+    - name: Get version
+      id: version
+      shell: bash
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        else
+          echo "version=dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        fi
+    - name: Rename for release
+      shell: bash
+      run: mv SoH.dmg soh-macos-${{ steps.version.outputs.version }}.dmg
+    - name: Upload build (artifact)
       uses: actions/upload-artifact@v7
       with:
         name: soh-mac
         path: |
-          SoH.dmg
+          soh-macos-${{ steps.version.outputs.version }}.dmg
           readme.txt
+    - name: Upload to release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          soh-macos-${{ steps.version.outputs.version }}.dmg
+        fail_on_unmatched_files: false
 
   build-linux:
     needs: generate-soh-otr
@@ -170,13 +195,32 @@ jobs:
       env:
         CC: gcc-12
         CXX: g++-12
-    - name: Upload build
+    - name: Get version
+      id: version
+      shell: bash
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        else
+          echo "version=dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        fi
+    - name: Rename for release
+      shell: bash
+      run: mv soh.appimage soh-linux-${{ steps.version.outputs.version }}.appimage
+    - name: Upload build (artifact)
       uses: actions/upload-artifact@v7
       with:
         name: soh-linux
         path: |
-          soh.appimage
+          soh-linux-${{ steps.version.outputs.version }}.appimage
           readme.txt
+    - name: Upload to release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          soh-linux-${{ steps.version.outputs.version }}.appimage
+        fail_on_unmatched_files: false
     - name: Save Cache deps folder
       if: ${{ github.ref_name == github.event.repository.default_branch }}
       uses: actions/cache/save@v5
@@ -235,13 +279,34 @@ jobs:
         (cd build-windows && cpack)
         cd ..
         mv _packages/*.zip _packages/soh-windows.zip
+    - name: Get version
+      id: version
+      shell: bash
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        else
+          echo "version=dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        fi
+    - name: Rename for release
+      shell: bash
+      run: mv _packages/soh-windows.zip _packages/soh-windows-${{ steps.version.outputs.version }}.zip
     - name: Unzip package
-      run: Expand-Archive -Path _packages/soh-windows.zip -DestinationPath soh-windows
-    - name: Upload build
+      run: |
+        $zip = Get-ChildItem _packages/soh-windows-*.zip | Select-Object -First 1
+        Expand-Archive -Path $zip.FullName -DestinationPath soh-windows
+    - name: Upload build (artifact)
       uses: actions/upload-artifact@v7
       with:
         name: soh-windows
         path: soh-windows
+    - name: Upload to release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          _packages/soh-windows-${{ steps.version.outputs.version }}.zip
+        fail_on_unmatched_files: false
     - name: Save Cache VCPKG folder
       if: ${{ github.ref_name == github.event.repository.default_branch }}
       uses: actions/cache/save@v5
