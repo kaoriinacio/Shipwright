@@ -927,7 +927,8 @@ void Environment_Update(PlayState* play, EnvironmentContext* envCtx, LightContex
             if (((msgCtx->msgLength == 0) && (msgCtx->msgMode == 0)) ||
                 (((void)0, gSaveContext.gameMode) == GAMEMODE_END_CREDITS)) {
                 if ((envCtx->unk_1A == 0) && !FrameAdvance_IsEnabled(play) &&
-                    (play->transitionMode == TRANS_MODE_OFF || ((void)0, gSaveContext.gameMode) != GAMEMODE_NORMAL)) {
+                    (play->transitionMode == TRANS_MODE_OFF || ((void)0, gSaveContext.gameMode) != GAMEMODE_NORMAL) &&
+                    !CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
 
                     if (IS_DAY || gTimeSpeed >= 0x190) {
                         gSaveContext.dayTime += gTimeSpeed;
@@ -937,7 +938,7 @@ void Environment_Update(PlayState* play, EnvironmentContext* envCtx, LightContex
                 }
             }
         }
-
+        
         //! @bug `gTimeSpeed` is unsigned, it can't be negative
         if (((((void)0, gSaveContext.sceneLayer) >= 5 || gTimeSpeed != 0) &&
              ((void)0, gSaveContext.dayTime) > gSaveContext.skyboxTime) ||
