@@ -12236,14 +12236,14 @@ void Player_Update(Actor* thisx, PlayState* play) {
         }
 
 // Æ BOT: Photo Mode - zera input de movimento
-    if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
-        // Zera input de movimento direcional
-        input.cur.stick_x = 0;
-        input.cur.stick_y = 0;
-        input.rel.stick_x = 0;
-        input.rel.stick_y = 0;
-        // NÃO retorna — deixa o resto do Update rodar (anima, colide, etc)
-    }
+if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
+    input.cur.stick_x = 0;
+    input.cur.stick_y = 0;
+    input.rel.stick_x = 0;
+    input.rel.stick_y = 0;
+    input.press.button &= ~BTN_CUP;   // <-- ADICIONA
+    input.cur.button   &= ~BTN_CUP;   // <-- ADICIONA
+}
         
         if (CVarGetFloat(CVAR_CHEAT("SpeedModifier.Value"), 1.0f) != 1.0f &&
             CVarGetInteger(CVAR_CHEAT("SpeedModifier.SpeedToggle"), 0)) {
