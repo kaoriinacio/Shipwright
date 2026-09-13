@@ -1126,9 +1126,7 @@ void Play_Update(PlayState* play) {
             if (!isPaused && (IREG(72) == 0)) {
                 PLAY_LOG(3580);
 
-                if (!CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
-                    play->gameplayFrames++;
-                }
+                play->gameplayFrames++;
                 func_800AA178(true);
 
                 // Gameplay stat tracking
@@ -1170,7 +1168,7 @@ void Play_Update(PlayState* play) {
 
                     PLAY_LOG(3637);
 
-                    if (!play->haltAllActors && !CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0)) {
+                    if (!play->haltAllActors) {
                         Actor_UpdateAll(play, &play->actorCtx);
                     }
 
