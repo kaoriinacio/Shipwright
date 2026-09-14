@@ -7517,6 +7517,12 @@ void Camera_UpdateDistortion(Camera* camera) {
 
 static s32 sOOBTimer = 0;
 Vec3s Camera_Update(Camera* camera) {
+    // Æ BOT: Photo Mode — subcâmeras não atualizam a view durante o Photo Mode,
+    // senão sobrescrevem a câmera livre da mainCam (caso ocarina pro NPC)
+    if (CVarGetInteger(CVAR_ENHANCEMENT("PhotoMode.Enabled"), 0) && camera->thisIdx != CAM_ID_MAIN) {
+        return camera->inputDir;
+    }
+
     Vec3f viewAt;
     Vec3f viewEye;
     Vec3f viewUp;
@@ -7543,7 +7549,7 @@ Vec3s Camera_Update(Camera* camera) {
         (camera->status == CAM_STAT_CUT || camera->status == CAM_STAT_WAIT)) {
         camera->status = CAM_STAT_ACTIVE;
     }
-
+    
     if (camera->status == CAM_STAT_CUT) {
         if (R_DBG_CAM_UPDATE) {
             osSyncPrintf("camera: cut out %x\n", camera);
