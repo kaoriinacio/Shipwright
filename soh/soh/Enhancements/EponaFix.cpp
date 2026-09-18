@@ -59,3 +59,5 @@ void RegisterEponaFix() {
         EponaObstacleFix(actor, play);
     });
 }
+
+static RegisterShipInitFunc initFunc(RegisterEponaFix, { "gEnhancements.Fixes.EponaObstacleFix" });
