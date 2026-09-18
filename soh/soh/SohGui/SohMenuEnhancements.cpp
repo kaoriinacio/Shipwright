@@ -1231,6 +1231,12 @@ void SohMenu::AddMenuEnhancements() {
             "Forces Goron City doors open if you somehow complete Fire Temple without talking to Goron Link"
             " and receiving the Goron Tunic."));
 
+    AddWidget(path, "Fix Epona Obstacle", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Fixes.EponaObstacleFix"))
+        .Options(CheckboxOptions().Tooltip(
+            "Impede a Epona de travar em beiradas de ponte e ondulações do terreno.\n"
+            "Ela continua recusando subir em paredes e penhascos de verdade."));
+
     AddWidget(path, "Fix MQ Water 1F Lock", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("MQWaterLockFix"))
         .PreFunc([](WidgetInfo& info) {
