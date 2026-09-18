@@ -26,24 +26,40 @@ static void EponaObstacleFix(Actor* actor, PlayState* play) {
         return;
     }
 
-    if (!(horse->stateFlags & ENHORSE_OBSTACLE)) {
+    // Age se qualquer uma das duas flags está ativa.
+    // ENHORSE_OBSTACLE é limpa todo frame; FORCE_REVERSING é a que persiste e trava.
+    if (!(horse->stateFlags & (ENHORSE_OBSTACLE | ENHORSE_FORCE_REVERSING))) {
         return;
     }
 
-    Vec3f ahead = actor->world.pos;
-    ahead.z += 40.0f * Math_SinS(actor->shape.rot.y);
-    ahead.x += 40.0f * Math_CosS(actor->shape.rot.y);
+    f32 sinY = Math_SinS(actor->shape.rot.y);
+    f32 cosY = Math_CosS(actor->shape.rot.y);
 
-    CollisionPoly* poly = nullptr;
-    s32 bgId = BG_ACTOR_MAX;
-    f32 floorY = BgCheck_EntityRaycastFloor5(play, &play->colCtx, &poly, &bgId, actor, &ahead);
+    // Testa várias distâncias à frente. Tronco de árvore é grosso, então
+    // 40 unidades não chega do outro lado. Vai até 130.
+    const f32 distances[] = { 40.0f, 70.0f, 100.0f, 130.0f };
 
-    if (floorY <= BGCHECK_Y_MIN || poly == nullptr) {
-        return;
-    }
+    for (f32 dist : distances) {
+        Vec3f ahead = actor->world.pos;
+        ahead.x += dist * sinY;
+        ahead.z += dist * cosY;
+        ahead.y = actor->world.pos.y + 60.0f; // começa de cima, como o jogo faz
 
-    if (!SurfaceType_IsHorseBlocked(&play->colCtx, poly, bgId)) {
-        horse->stateFlags &= ~ENHORSE_OBSTACLE;
+        CollisionPoly* poly = nullptr;
+        s32 bgId = BG_ACTOR_MAX;
+        f32 floorY = BgCheck_EntityRaycastFloor5(play, &play->colCtx, &poly, &bgId, actor, &ahead);
+
+        if (floorY <= BGCHECK_Y_MIN || poly == nullptr) {
+            continue;
+        }
+
+        // Chão andável na mesma altura? É obstáculo fino, libera.
+        if (!SurfaceType_IsHorseBlocked(&play->colCtx, poly, bgId) &&
+            fabsf(floorY - actor->world.pos.y) < 40.0f) {
+            horse->stateFlags &= ~ENHORSE_OBSTACLE;
+            horse->stateFlags &= ~ENHORSE_FORCE_REVERSING;
+            return;
+        }
     }
 }
 
