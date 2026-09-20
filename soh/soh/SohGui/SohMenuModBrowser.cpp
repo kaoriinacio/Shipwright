@@ -221,32 +221,29 @@ static std::string GetExecutablePath() {
 #endif
 }
 
-// Pede pro jogo fechar. Tenta primeiro o metodo limpo do Ship
-// (Window::Close), cai pro SDL_QUIT se nao existir, e por ultimo
-// tem um failsafe: se nada fechar em 1.5s, sai via std::exit(0).
+// Pede pro jogo fechar. Se win->Close() existir no teu LUS, descomenta a
+// camada 1 pra fechar limpo. Senao cai pro SDL_QUIT + failsafe.
 static void RequestGameQuit() {
     bool requested = false;
 
-    // Camada 1: usa o proprio Ship se o metodo Close existir.
-    // Se o teu LUS nao tiver, o compilador vai reclamar aqui e
-    // basta comentar esse bloco.
+    // Camada 1: fecha pelo proprio Ship. Descomenta SE existir o metodo
+    // Close() em Ship::Window no teu fork do LUS.
+    /*
     try {
         auto ctx = Ship::Context::GetRawInstance();
         if (ctx) {
             auto win = ctx->GetWindow();
             if (win) {
-                // Se a assinatura for diferente no teu fork, ajusta aqui.
-                // A maioria dos forks usa Close() sem argumentos.
-                // win->Close();
-                // requested = true;
-                // SPDLOG_INFO("[ModBrowser] Ship::Window::Close() called");
+                win->Close();
+                requested = true;
+                SPDLOG_INFO("[ModBrowser] Ship::Window::Close() called");
             }
         }
     } catch (...) {
         SPDLOG_WARN("[ModBrowser] Ship close attempt threw");
     }
+    */
 
-    // Camada 2: SDL_QUIT classico.
     if (!requested) {
         SDL_Event ev;
         SDL_zero(ev);
@@ -255,9 +252,8 @@ static void RequestGameQuit() {
         SPDLOG_INFO("[ModBrowser] SDL_QUIT pushed");
     }
 
-    // Camada 3: failsafe. Se em 1.5s o processo ainda estiver vivo,
-    // encerra na marra. Save e config ja foram escritos no fluxo normal
-    // de shutdown do jogo ate aqui.
+    // Failsafe: se em 1.5s o processo ainda estiver vivo, encerra na marra.
+    // Save e config ja foram escritos no fluxo normal de shutdown ate aqui.
     std::thread([]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         SPDLOG_WARN("[ModBrowser] Game did not quit in time, calling std::exit(0)");
@@ -265,9 +261,9 @@ static void RequestGameQuit() {
     }).detach();
 }
 
-// Reinicia o jogo: agenda o novo processo (com 2s de atraso pra dar
-// tempo do antigo morrer) e pede pra fechar o atual. Assim nao abre
-// duas janelas ao mesmo tempo.
+// Agenda um novo processo do jogo que vai abrir DEPOIS que este morrer.
+// No Windows usa um .bat temporario num processo 100% desacoplado
+// (DETACHED_PROCESS) pra sobreviver a morte do processo pai.
 static void RestartGame() {
     std::string exe = GetExecutablePath();
     if (exe.empty()) {
@@ -281,38 +277,62 @@ static void RestartGame() {
     SPDLOG_INFO("[ModBrowser] Restart: exe='{}' cwd='{}'", exe, exeDir.string());
 
 #ifdef _WIN32
-    // Spawna um cmd oculto que espera 2s e abre o jogo. 2s é tempo
-    // suficiente pro processo atual morrer. CREATE_NO_WINDOW evita
-    // flash de console. Aspas duplas escapadas pra lidar com paths
-    // tipo "soh-windows (1)".
-    std::string cmd =
-        "cmd /c \"timeout /t 2 /nobreak >nul & start \\\"\\\" \\\"" +
-        exe + "\\\"\"";
+    // Escreve um .bat temporario em %TEMP%. Ele espera 3s, abre o jogo,
+    // e se auto-deleta. Fica totalmente independente do processo pai.
+    char tempBuf[MAX_PATH] = {0};
+    DWORD tempLen = GetTempPathA(MAX_PATH, tempBuf);
+    std::string tempDir = (tempLen > 0) ? std::string(tempBuf, tempLen) : "C:\\Windows\\Temp\\";
+    std::string batPath = tempDir + "soh_restart_" +
+                          std::to_string(GetCurrentProcessId()) + ".bat";
 
+    {
+        std::ofstream bat(batPath, std::ios::binary);
+        if (!bat) {
+            SPDLOG_ERROR("[ModBrowser] Failed to write restart .bat at {}", batPath);
+            Notification::Emit({ .message = "Failed to schedule restart (.bat)" });
+            return;
+        }
+        // @echo off      -> sem eco
+        // ping 127.0.0.1 -> alternativa ao timeout que funciona sem console
+        // start ""       -> abre o exe desacoplado (o "" eh o titulo da janela)
+        // del "%~f0"     -> auto-deleta o .bat depois de rodar
+        bat << "@echo off\r\n";
+        bat << "ping 127.0.0.1 -n 4 >nul\r\n";
+        bat << "cd /d \"" << exeDir.string() << "\"\r\n";
+        bat << "start \"\" \"" << exe << "\"\r\n";
+        bat << "del \"%~f0\"\r\n";
+    }
+    SPDLOG_INFO("[ModBrowser] Restart .bat written: {}", batPath);
+
+    // Spawna o .bat com DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP pra
+    // garantir que ele NAO morra junto com o jogo quando chamarmos exit(0).
     STARTUPINFOA si = { sizeof(si) };
     PROCESS_INFORMATION pi = { 0 };
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
 
-    std::vector<char> cmdBuf(cmd.begin(), cmd.end());
+    std::string cmdLine = "cmd.exe /c \"" + batPath + "\"";
+    std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
     cmdBuf.push_back('\0');
 
+    DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
     BOOL ok = CreateProcessA(
         nullptr, cmdBuf.data(), nullptr, nullptr,
-        FALSE, CREATE_NO_WINDOW, nullptr,
-        exeDir.string().c_str(), &si, &pi);
+        FALSE, flags, nullptr,
+        nullptr,   // cwd: deixa o .bat cuidar do cd
+        &si, &pi);
 
     if (ok) {
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
-        SPDLOG_INFO("[ModBrowser] Restart process scheduled");
+        SPDLOG_INFO("[ModBrowser] Restart process scheduled (detached)");
     } else {
         SPDLOG_ERROR("[ModBrowser] CreateProcess failed ({})", GetLastError());
         Notification::Emit({ .message = "Failed to schedule restart" });
         return;
     }
 #else
-    // Unix: fork + sleep + exec.
+    // Unix: fork + sleep + exec
     pid_t pid = fork();
     if (pid < 0) {
         SPDLOG_ERROR("[ModBrowser] fork failed");
@@ -321,7 +341,7 @@ static void RestartGame() {
     }
     if (pid == 0) {
         setsid();
-        sleep(2);
+        sleep(3);
         if (!exeDir.empty()) (void)chdir(exeDir.string().c_str());
         execl(exe.c_str(), exe.c_str(), (char*)nullptr);
         _exit(127);
