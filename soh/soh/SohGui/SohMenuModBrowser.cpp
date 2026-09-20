@@ -1,3 +1,11 @@
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #ifndef _WIN32_WINNT
+        #define _WIN32_WINNT 0x0A00
+    #endif
+#endif
+
 #include "SohMenu.h"
 #include <soh/Notification/Notification.h>
 #include <soh/OTRGlobals.h>
@@ -50,7 +58,6 @@ static std::string HttpGet(const std::string& host, const std::string& path) {
 
         auto res = cli.Get(path.c_str());
         if (!res) {
-            // fallback: usa codigo numerico se to_string nao existir na versao
             ModBrowserState::lastError = "Falha request (err code " +
                 std::to_string(static_cast<int>(res.error())) + ")";
             return "";
