@@ -36,6 +36,7 @@
 #include <unordered_set>
 #include <mutex>
 #include <thread>
+#include <future>
 #include <atomic>
 #include <algorithm>
 #include <exception>
@@ -72,15 +73,21 @@ struct ModEntry {
     ImageState     imgState = ImageState::NotLoaded;
     std::string    thumbDiskPath;
     ImTextureID    texId = nullptr;
+
+    // Detalhes expansiveis inline (substitui a antiga aba "Detalhes" separada)
+    bool        detailsExpanded = false;
+    bool        detailsFetching = false;
+    bool        detailsFetched  = false;
+    std::string detailsText;
 };
 
 namespace ModBrowserState {
     static std::vector<ModEntry> mods;
     static std::mutex            modsMutex;
     static std::atomic<bool>     fetching{ false };
+    static std::atomic<int>      fetchModsSoFar{ 0 };
     static std::string           lastError;
     static char                  searchBuf[128] = "";
-    static int                   selectedModId = 0;
 
     static std::atomic<bool>     downloading{ false };
     static std::atomic<int>      downloadModId{ 0 };
@@ -90,11 +97,8 @@ namespace ModBrowserState {
     static std::atomic<size_t>   downloadTotal{ 0 };
 
     static std::atomic<bool>     imagesDownloading{ false };
-
-    static std::atomic<bool>     detailsFetching{ false };
-    static std::mutex            detailsMutex;
-    static std::string           detailsText;
-    static int                   detailsModId = 0;
+    static std::atomic<int>      thumbsTotal{ 0 };
+    static std::atomic<int>      thumbsDone{ 0 };
 
     static std::atomic<bool>     cacheLoaded{ false };
 }
@@ -272,18 +276,12 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
     try {
         json j = json::parse(body);
 
-        // FIX: busca explicitamente "_aRecords" primeiro. Antes o código pegava
-        // "o primeiro array que aparecer no objeto" (iterando j.items()), o que é
-        // frágil: se "_aMetadata" (que vem antes de "_aRecords" em ordem alfabética
-        // no nlohmann::json) tiver qualquer campo array, o parser pegava o array
-        // errado e a página "esvaziava" sem motivo, cortando o fetch cedo.
         const json* arr = nullptr;
         if (j.is_object() && j.contains("_aRecords") && j["_aRecords"].is_array()) {
             arr = &j["_aRecords"];
         } else if (j.is_array()) {
             arr = &j;
         } else if (j.is_object()) {
-            // fallback só se não achou "_aRecords" (formato inesperado)
             for (auto& [key, value] : j.items()) {
                 if (value.is_array()) { arr = &value; break; }
             }
@@ -331,69 +329,81 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
 }
 
 // ============================================================
-// Fetch (paginado + dedup)
+// Fetch (paginado em lotes paralelos + dedup) + thumbnails encadeadas
 // ============================================================
+
+static void FetchAllThumbnailsAsync(); // fwd decl
 
 static void FetchModsAsync() {
     ModBrowserState::fetching = true;
+    ModBrowserState::fetchModsSoFar = 0;
     ModBrowserState::lastError.clear();
 
     std::vector<ModEntry> allMods;
     std::unordered_set<int> seenIds;
 
-    const int MAX_PAGES = 100;   // continua até vir página sem novidade
+    const int MAX_PAGES  = 100;
+    const int BATCH_SIZE = 5; // paginas buscadas em paralelo por lote
 
-    for (int page = 1; page <= MAX_PAGES; ++page) {
-        // FIX: "_sSort=default" pode não ser uma ordenação estável entre
-        // requisições (itens podem reordenar por score/algoritmo). Isso fazia o
-        // critério de parada por "novos == 0" nunca convergir de verdade — o
-        // fetch ia até MAX_PAGES=100 (~30s+ só de sleep) e no meio do caminho
-        // corria risco de bater rate-limit, o que aparecia como "página vazia,
-        // parando" e parecia um bug de paginação. "_sSort=new" é cronológico e
-        // estável, então a mesma página sempre devolve os mesmos itens.
-        // Sem _nPerpage — o Subfeed ignora e sempre devolve 15
-        std::string path = "/apiv11/Game/16121/Subfeed"
-                           "?_nPage=" + std::to_string(page) +
-                           "&_sSort=new"
-                           "&_csvModelInclusions=Mod";
+    bool done = false;
+    for (int batchStart = 1; !done && batchStart <= MAX_PAGES; batchStart += BATCH_SIZE) {
+        std::vector<std::future<std::pair<int, std::vector<ModEntry>>>> futures;
+        int batchEnd = std::min(batchStart + BATCH_SIZE - 1, MAX_PAGES);
 
-        std::string body = HttpGet("gamebanana.com", path);
-        if (body.empty()) {
-            SPDLOG_WARN("[ModBrowser] Pagina {} vazia, parando", page);
-            break;
+        for (int page = batchStart; page <= batchEnd; ++page) {
+            futures.push_back(std::async(std::launch::async, [page]() {
+                std::string path = "/apiv11/Game/16121/Subfeed"
+                                   "?_nPage=" + std::to_string(page) +
+                                   "&_sSort=new"
+                                   "&_csvModelInclusions=Mod";
+                std::string body = HttpGet("gamebanana.com", path);
+                std::vector<ModEntry> mods;
+                if (!body.empty()) mods = ParseGameBananaMods(body);
+                return std::make_pair(page, mods);
+            }));
         }
 
-        auto mods = ParseGameBananaMods(body);
-        if (mods.empty()) {
-            SPDLOG_INFO("[ModBrowser] Fim das paginas na {}", page);
-            break;
-        }
+        std::vector<std::pair<int, std::vector<ModEntry>>> results;
+        results.reserve(futures.size());
+        for (auto& f : futures) results.push_back(f.get());
+        std::sort(results.begin(), results.end(),
+                  [](auto& a, auto& b) { return a.first < b.first; });
 
-        int novos = 0;
-        for (auto& m : mods) {
-            if (m.id <= 0) continue;
-            if (seenIds.insert(m.id).second) {
-                allMods.push_back(std::move(m));
-                novos++;
+        // Processa em ordem de pagina pra manter o dedup e o corte deterministicos,
+        // mesmo com as requisicoes tendo sido disparadas em paralelo.
+        for (auto& [page, mods] : results) {
+            if (mods.empty()) {
+                SPDLOG_INFO("[ModBrowser] Fim das paginas na {}", page);
+                done = true;
+                break;
+            }
+
+            int novos = 0;
+            for (auto& m : mods) {
+                if (m.id <= 0) continue;
+                if (seenIds.insert(m.id).second) {
+                    allMods.push_back(std::move(m));
+                    novos++;
+                }
+            }
+            ModBrowserState::fetchModsSoFar = (int)allMods.size();
+
+            SPDLOG_INFO("[ModBrowser] Pagina {} -> {} mods ({} novos, {} total)",
+                        page, mods.size(), novos, allMods.size());
+
+            if (novos == 0) {
+                SPDLOG_INFO("[ModBrowser] Pagina {} sem novidade, parando", page);
+                done = true;
+                break;
+            }
+            if (mods.size() < 15) {
+                SPDLOG_INFO("[ModBrowser] Pagina {} parcial ({} itens), ultima pagina", page, mods.size());
+                done = true;
+                break;
             }
         }
 
-        SPDLOG_INFO("[ModBrowser] Pagina {} -> {} mods ({} novos, {} total)",
-                    page, mods.size(), novos, allMods.size());
-
-        if (novos == 0) {
-            SPDLOG_INFO("[ModBrowser] Pagina {} sem novidade, parando", page);
-            break;
-        }
-
-        // Página veio com menos itens que o tamanho de página padrão (15) ->
-        // é a última página de verdade, não precisa continuar tentando.
-        if (mods.size() < 15) {
-            SPDLOG_INFO("[ModBrowser] Pagina {} parcial ({} itens), ultima pagina", page, mods.size());
-            break;
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        if (!done) std::this_thread::sleep_for(std::chrono::milliseconds(150));
     }
 
     if (!allMods.empty()) {
@@ -408,6 +418,13 @@ static void FetchModsAsync() {
     }
 
     ModBrowserState::fetching = false;
+
+    // "Atualizar lista" agora ja puxa as thumbnails automaticamente, sem precisar
+    // clicar em "Baixar thumbnails" depois. Chamada direta (mesma thread de
+    // background), FetchAllThumbnailsAsync paraleliza os downloads internamente.
+    if (!ModBrowserState::mods.empty()) {
+        FetchAllThumbnailsAsync();
+    }
 }
 
 // ============================================================
@@ -472,6 +489,10 @@ static void DownloadThumbnailToDisk(int modId, std::string url) {
     }
 }
 
+// Baixa varias thumbnails ao mesmo tempo (pool de workers) em vez de uma por vez.
+// Tambem reconsidera thumbnails que falharam antes (Failed), nao so as nunca
+// tentadas (NotLoaded) -- clicar "Baixar thumbnails" agora serve pra tentar de
+// novo o que deu erro.
 static void FetchAllThumbnailsAsync() {
     ModBrowserState::imagesDownloading = true;
 
@@ -479,14 +500,39 @@ static void FetchAllThumbnailsAsync() {
     {
         std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
         for (auto& m : ModBrowserState::mods) {
-            if (m.imgState == ImageState::NotLoaded && !m.thumbUrl.empty()) {
+            if ((m.imgState == ImageState::NotLoaded || m.imgState == ImageState::Failed) &&
+                !m.thumbUrl.empty()) {
                 m.imgState = ImageState::Downloading;
                 jobs.push_back({m.id, m.thumbUrl});
             }
         }
     }
+
+    ModBrowserState::thumbsTotal = (int)jobs.size();
+    ModBrowserState::thumbsDone = 0;
+
+    if (jobs.empty()) {
+        ModBrowserState::imagesDownloading = false;
+        return;
+    }
+
     SPDLOG_INFO("[ModBrowser] Baixando {} thumbnails", jobs.size());
-    for (auto& [id, url] : jobs) DownloadThumbnailToDisk(id, url);
+
+    std::atomic<size_t> nextJob{0};
+    const int WORKERS = (int)std::min<size_t>(8, jobs.size());
+    std::vector<std::thread> workers;
+    workers.reserve(WORKERS);
+    for (int w = 0; w < WORKERS; ++w) {
+        workers.emplace_back([&jobs, &nextJob]() {
+            size_t idx;
+            while ((idx = nextJob.fetch_add(1)) < jobs.size()) {
+                DownloadThumbnailToDisk(jobs[idx].first, jobs[idx].second);
+                ModBrowserState::thumbsDone++;
+            }
+        });
+    }
+    for (auto& t : workers) t.join();
+
     ModBrowserState::imagesDownloading = false;
 }
 
@@ -658,10 +704,6 @@ static void DownloadModAsync(int modId, std::string modName) {
                 if (chosen) break;
             }
             if (!chosen) {
-                // FIX: antes caía direto pro primeiro arquivo do mod (_aFiles[0]),
-                // que podia ser um readme/screenshot não-instalável, baixando "com
-                // sucesso" algo inútil. Agora aborta com erro claro em vez de
-                // fingir que deu certo.
                 ModBrowserState::lastError = "Nenhum arquivo instalavel encontrado (.otr/.o2r/.ootr/.zip)";
                 Notification::Emit({ .message = "Mod sem arquivo instalavel reconhecido" });
                 ModBrowserState::downloading = false;
@@ -795,12 +837,6 @@ static void DownloadModAsync(int modId, std::string modName) {
             return;
         }
 
-        // FIX: prioridade invertida. Antes, se "realExt" (nome relatado pela API)
-        // fosse .otr/.o2r/.ootr, o código renomeava o arquivo baixado direto pra
-        // .otr SEM checar os magic bytes — mesmo que o conteúdo real fosse um zip
-        // (comum: GameBanana as vezes zipa até arquivo único). Resultado: "zip
-        // disfarçado de .otr" quebra o mod, mas o app mostra "Instalado" do
-        // mesmo jeito. Agora os bytes reais (isZip) mandam antes do nome relatado.
         if (isZip) {
             SPDLOG_INFO("[ModBrowser] ZIP detectado, extraindo...");
             bool ok = ExtractModFilesFromZip(tempPath, modsPath);
@@ -836,15 +872,15 @@ static void DownloadModAsync(int modId, std::string modName) {
 }
 
 // ============================================================
-// Detalhes
+// Detalhes (agora inline / expansivel, por mod)
 // ============================================================
 
-static void FetchDetailsAsync(int modId) {
-    ModBrowserState::detailsFetching = true;
+static void FetchModDetailsAsync(int modId) {
     {
-        std::lock_guard<std::mutex> lk(ModBrowserState::detailsMutex);
-        ModBrowserState::detailsText = "Carregando...";
-        ModBrowserState::detailsModId = modId;
+        std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
+        for (auto& m : ModBrowserState::mods) {
+            if (m.id == modId) { m.detailsFetching = true; break; }
+        }
     }
 
     std::string path = "/apiv11/Mod/" + std::to_string(modId) + "/ProfilePage";
@@ -857,11 +893,16 @@ static void FetchDetailsAsync(int modId) {
             if (j.contains("_sText")) text = j["_sText"].get<std::string>();
         } catch (...) {}
     }
-    {
-        std::lock_guard<std::mutex> lk(ModBrowserState::detailsMutex);
-        ModBrowserState::detailsText = text;
+
+    std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
+    for (auto& m : ModBrowserState::mods) {
+        if (m.id == modId) {
+            m.detailsText     = text;
+            m.detailsFetched  = true;
+            m.detailsFetching = false;
+            break;
+        }
     }
-    ModBrowserState::detailsFetching = false;
 }
 
 // ============================================================
@@ -874,7 +915,8 @@ static void DrawModList(WidgetInfo& info) {
     std::lock_guard<std::mutex> lock(ModBrowserState::modsMutex);
 
     if (ModBrowserState::fetching) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Carregando mods...");
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Carregando mods... (%d encontrados ate agora)",
+                            ModBrowserState::fetchModsSoFar.load());
         return;
     }
     if (!ModBrowserState::lastError.empty()) {
@@ -895,6 +937,15 @@ static void DrawModList(WidgetInfo& info) {
         } else {
             ImGui::Text("Recebido: %s", FormatBytes(cur).c_str());
         }
+        ImGui::Separator();
+    }
+    if (ModBrowserState::imagesDownloading) {
+        int done  = ModBrowserState::thumbsDone.load();
+        int total = ModBrowserState::thumbsTotal.load();
+        float frac = total > 0 ? (float)done / (float)total : 0.0f;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Thumbnails %d/%d", done, total);
+        ImGui::ProgressBar(frac, ImVec2(-1, 0), buf);
         ImGui::Separator();
     }
     if (ModBrowserState::mods.empty()) {
@@ -938,16 +989,25 @@ static void DrawModList(WidgetInfo& info) {
 
         ImGui::BeginGroup();
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", m.name.c_str());
-        if (!m.author.empty())   ImGui::TextDisabled("por %s", m.author.c_str());
-        if (!m.category.empty()) ImGui::TextDisabled("Categoria: %s", m.category.c_str());
+        if (!m.author.empty() || !m.category.empty()) {
+            std::string sub;
+            if (!m.author.empty())   sub += "por " + m.author;
+            if (!m.category.empty()) sub += (sub.empty() ? "" : "  |  ") + m.category;
+            ImGui::TextDisabled("%s", sub.c_str());
+        }
 
         if (ImGui::Button("Abrir pagina")) {
             if (!m.profileUrl.empty()) SDL_OpenURL(m.profileUrl.c_str());
         }
         ImGui::SameLine();
-        if (ImGui::Button("Detalhes")) {
-            ModBrowserState::selectedModId = m.id;
-            std::thread(FetchDetailsAsync, m.id).detach();
+        // Botao "Detalhes" agora funciona como accordion: clica pra expandir a
+        // caixa com o texto inline, clica de novo pra fechar. So dispara o
+        // fetch na primeira vez que abre (fica em cache no proprio ModEntry).
+        if (ImGui::Button(m.detailsExpanded ? "Fechar detalhes" : "Detalhes")) {
+            m.detailsExpanded = !m.detailsExpanded;
+            if (m.detailsExpanded && !m.detailsFetched && !m.detailsFetching) {
+                std::thread(FetchModDetailsAsync, m.id).detach();
+            }
         }
         ImGui::SameLine();
 
@@ -960,42 +1020,24 @@ static void DrawModList(WidgetInfo& info) {
         }
         ImGui::EndDisabled();
         ImGui::EndGroup();
+
+        if (m.detailsExpanded) {
+            ImGui::Indent();
+            if (m.detailsFetching) {
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Carregando detalhes...");
+            } else {
+                ImGui::BeginChild("##inlineDetails", ImVec2(0, 140), true);
+                ImGui::TextWrapped("%s", m.detailsText.c_str());
+                ImGui::EndChild();
+            }
+            ImGui::Unindent();
+        }
+
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
         ImGui::PopID();
     }
-    ImGui::EndChild();
-}
-
-static void DrawDetails(WidgetInfo& info) {
-    int sel = ModBrowserState::selectedModId;
-    if (sel == 0) {
-        ImGui::TextDisabled("Nenhum mod selecionado.");
-        ImGui::TextWrapped("Clica em 'Detalhes' em algum mod da aba Browse.");
-        return;
-    }
-
-    std::string name;
-    {
-        std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
-        auto it = std::find_if(ModBrowserState::mods.begin(), ModBrowserState::mods.end(),
-            [&](const ModEntry& m){ return m.id == sel; });
-        if (it != ModBrowserState::mods.end()) name = it->name;
-    }
-    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", name.c_str());
-    ImGui::Separator();
-
-    if (ModBrowserState::detailsFetching) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Carregando detalhes...");
-        return;
-    }
-
-    std::string txt;
-    {
-        std::lock_guard<std::mutex> lk(ModBrowserState::detailsMutex);
-        txt = ModBrowserState::detailsText;
-    }
-    ImGui::BeginChild("DetailsScroll", ImVec2(0, 450), true);
-    ImGui::TextWrapped("%s", txt.c_str());
     ImGui::EndChild();
 }
 
@@ -1017,7 +1059,7 @@ void SohMenu::AddMenuModBrowser() {
             std::thread(FetchModsAsync).detach();
             Notification::Emit({ .message = "Buscando mods..." });
         });
-    AddWidget(path, "Baixar thumbnails", WIDGET_BUTTON)
+    AddWidget(path, "Baixar/retentar thumbnails", WIDGET_BUTTON)
         .Callback([](WidgetInfo& info) {
             if (ModBrowserState::imagesDownloading) return;
             std::thread(FetchAllThumbnailsAsync).detach();
@@ -1033,11 +1075,6 @@ void SohMenu::AddMenuModBrowser() {
     AddWidget(path, "Resultados", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "##ModBrowserList", WIDGET_CUSTOM).CustomFunction(DrawModList);
 
-    path.sidebarName = "Detalhes";
-    AddSidebarEntry("Mod Browser", path.sidebarName, 1);
-    path.column = SECTION_COLUMN_1;
-    AddWidget(path, "##DetailsView", WIDGET_CUSTOM).CustomFunction(DrawDetails);
-
     path.sidebarName = "Sobre";
     AddSidebarEntry("Mod Browser", path.sidebarName, 1);
     path.column = SECTION_COLUMN_1;
@@ -1046,7 +1083,9 @@ void SohMenu::AddMenuModBrowser() {
     AddWidget(path,
               "Mod Browser experimental para SoH.\n"
               "Fonte: GameBanana API v11.\n"
-              "Auto-install de .otr/.o2r/zips.",
+              "Auto-install de .otr/.o2r/zips.\n"
+              "Atualizar a lista ja baixa as thumbnails junto.\n"
+              "Clique em Detalhes pra expandir a descricao do mod.",
               WIDGET_TEXT);
 }
 
