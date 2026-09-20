@@ -85,26 +85,45 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
     std::vector<ModEntry> result;
     try {
         json j = json::parse(body);
-        
-        // DEBUG: loga o que veio
-        SPDLOG_INFO("[ModBrowser] Resposta (primeiros 500 chars): {}", 
-                    body.substr(0, std::min<size_t>(500, body.size())));
-        
-        if (!j.is_array()) {
-            ModBrowserState::lastError = "JSON nao e array";
+
+        // DEBUG: loga o que veio (primeiros 800 chars)
+        SPDLOG_INFO("[ModBrowser] Resposta (primeiros 800 chars): {}",
+                    body.substr(0, std::min<size_t>(800, body.size())));
+
+        // A API pode retornar um array direto OU um objeto com um array dentro.
+        const json* arr = nullptr;
+        if (j.is_array()) {
+            arr = &j;
+        } else if (j.is_object()) {
+            for (auto& [key, value] : j.items()) {
+                if (value.is_array()) {
+                    arr = &value;
+                    SPDLOG_INFO("[ModBrowser] Usando array da chave '{}'", key);
+                    break;
+                }
+            }
+        }
+
+        if (!arr) {
+            ModBrowserState::lastError = "JSON nao contem array de mods";
             return result;
         }
-        for (auto& item : j) {
-            if (!item.contains("_sModelName")) continue;
-            if (item["_sModelName"] != "Mod") continue;
+
+        for (auto& item : *arr) {
+            if (!item.is_object()) continue;
 
             ModEntry m;
             if (item.contains("_idRow"))       m.id = item["_idRow"].get<int>();
             if (item.contains("_sName"))       m.name = item["_sName"].get<std::string>();
             if (item.contains("_sProfileUrl")) m.profileUrl = item["_sProfileUrl"].get<std::string>();
+
             if (item.contains("_aSubmitter") && item["_aSubmitter"].is_object() &&
                 item["_aSubmitter"].contains("_sName"))
                 m.author = item["_aSubmitter"]["_sName"].get<std::string>();
+            else if (item.contains("_aOwner") && item["_aOwner"].is_object() &&
+                     item["_aOwner"].contains("_sName"))
+                m.author = item["_aOwner"]["_sName"].get<std::string>();
+
             if (item.contains("_aCategory") && item["_aCategory"].is_object() &&
                 item["_aCategory"].contains("_sName"))
                 m.category = item["_aCategory"]["_sName"].get<std::string>();
@@ -126,7 +145,8 @@ static void FetchModsAsync() {
     ModBrowserState::lastError.clear();
 
     const std::string host = "gamebanana.com";
-    const std::string path = "/apiv11/Game/5689/Subfeed?_nPage=1&_sSort=default&_csvModelInclusions=Mod";
+    // ID do Ship of Harkinian no GameBanana: 16121
+    const std::string path = "/apiv11/Game/16121/Subfeed?_nPage=1&_sSort=default&_csvModelInclusions=Mod";
 
     std::string body = HttpGet(host, path);
 
