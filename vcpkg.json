@@ -1,0 +1,7 @@
+{
+  "name": "soh-mod-browser",
+  "version": "1.0.0",
+  "dependencies": [
+    "openssl"
+  ]
+}
