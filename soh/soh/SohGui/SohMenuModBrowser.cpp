@@ -47,9 +47,6 @@
 #include <cstdio>
 #include <deque>
 
-// ============================================================
-// Plataforma: headers pra restart / abrir pasta
-// ============================================================
 #ifdef _WIN32
     #include <windows.h>
     #include <shellapi.h>
@@ -175,7 +172,6 @@ static std::string ExtensionFromUrl(const std::string& url) {
     return ext;
 }
 
-// Separa "https://host/path?query" em host e path.
 static bool ParseUrl(const std::string& url, std::string& host, std::string& path) {
     std::string s = url;
     if (s.rfind("https://", 0) == 0) s = s.substr(8);
@@ -202,10 +198,9 @@ static std::shared_ptr<Fast::Fast3dGui> GetFast3dGui() {
 }
 
 // ============================================================
-// Restart + abrir pasta
+// Restart + open folder
 // ============================================================
 
-// Descobre o caminho completo do executavel atual, por plataforma.
 static std::string GetExecutablePath() {
 #ifdef _WIN32
     char buf[MAX_PATH] = {0};
@@ -225,8 +220,6 @@ static std::string GetExecutablePath() {
 #endif
 }
 
-// Fecha o jogo atual de forma "limpa" mandando um SDL_QUIT pro main loop.
-// Nao usa exit() pra nao pular shutdown de save/config.
 static void RequestGameQuit() {
     SDL_Event ev;
     SDL_zero(ev);
@@ -234,12 +227,11 @@ static void RequestGameQuit() {
     SDL_PushEvent(&ev);
 }
 
-// Reinicia o jogo: spawna um novo processo do exe atual e pede pra fechar.
 static void RestartGame() {
     std::string exe = GetExecutablePath();
     if (exe.empty()) {
-        Notification::Emit({ .message = "Nao consegui achar o executavel do jogo" });
-        SPDLOG_ERROR("[ModBrowser] GetExecutablePath retornou vazio");
+        Notification::Emit({ .message = "Couldn't find the game executable" });
+        SPDLOG_ERROR("[ModBrowser] GetExecutablePath returned empty");
         return;
     }
 
@@ -248,27 +240,22 @@ static void RestartGame() {
     SPDLOG_INFO("[ModBrowser] Restart: exe='{}' cwd='{}'", exe, exeDir.string());
 
 #ifdef _WIN32
-    // ShellExecuteA funciona bem com caminhos com espaco/parenteses (ex:
-    // "soh-windows (1)"), sem shell parsing. "open" lanca .exe direto.
     HINSTANCE r = ShellExecuteA(
         nullptr, "open", exe.c_str(), nullptr,
         exeDir.string().c_str(), SW_SHOWNORMAL);
     if (reinterpret_cast<INT_PTR>(r) <= 32) {
-        SPDLOG_ERROR("[ModBrowser] ShellExecuteA falhou ({})", (long long)(INT_PTR)r);
-        Notification::Emit({ .message = "Falha ao reiniciar (ShellExecute)" });
+        SPDLOG_ERROR("[ModBrowser] ShellExecuteA failed ({})", (long long)(INT_PTR)r);
+        Notification::Emit({ .message = "Failed to restart (ShellExecute)" });
         return;
     }
 #else
-    // Unix: fork + exec, com setsid pra desacoplar o novo processo do atual
-    // (senao o filho morre junto quando o pai sai).
     pid_t pid = fork();
     if (pid < 0) {
-        SPDLOG_ERROR("[ModBrowser] fork falhou");
-        Notification::Emit({ .message = "Falha ao reiniciar (fork)" });
+        SPDLOG_ERROR("[ModBrowser] fork failed");
+        Notification::Emit({ .message = "Failed to restart (fork)" });
         return;
     }
     if (pid == 0) {
-        // Filho
         setsid();
         if (!exeDir.empty()) {
             (void)chdir(exeDir.string().c_str());
@@ -276,31 +263,28 @@ static void RestartGame() {
         execl(exe.c_str(), exe.c_str(), (char*)nullptr);
         _exit(127);
     }
-    // Pai segue pra pedir quit abaixo
 #endif
 
-    SPDLOG_INFO("[ModBrowser] Restart enviado, pedindo quit...");
+    SPDLOG_INFO("[ModBrowser] Restart sent, requesting quit...");
     RequestGameQuit();
 }
 
-// Abre a pasta de mods no explorador de arquivos do SO.
 static void OpenModsFolder() {
     std::filesystem::path modsPath = GetModsPath();
     std::string p = modsPath.string();
-    SPDLOG_INFO("[ModBrowser] Abrindo pasta: {}", p);
+    SPDLOG_INFO("[ModBrowser] Opening folder: {}", p);
 
 #ifdef _WIN32
     HINSTANCE r = ShellExecuteA(
         nullptr, "open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     if (reinterpret_cast<INT_PTR>(r) <= 32) {
-        SPDLOG_ERROR("[ModBrowser] ShellExecuteA falhou ({})", (long long)(INT_PTR)r);
-        Notification::Emit({ .message = "Falha ao abrir pasta" });
+        SPDLOG_ERROR("[ModBrowser] ShellExecuteA failed ({})", (long long)(INT_PTR)r);
+        Notification::Emit({ .message = "Failed to open folder" });
     }
 #elif defined(__APPLE__)
     std::string cmd = "open \"" + p + "\"";
     std::system(cmd.c_str());
 #else
-    // Linux: tenta xdg-open, senao gio open (fallback comum em distros GTK)
     std::string cmd = "xdg-open \"" + p + "\" >/dev/null 2>&1 &";
     std::system(cmd.c_str());
 #endif
@@ -325,9 +309,9 @@ static void SaveCache(const std::vector<ModEntry>& mods) {
         }
         std::ofstream out(GetCachePath());
         out << j.dump();
-        SPDLOG_INFO("[ModBrowser] Cache salvo ({} mods)", mods.size());
+        SPDLOG_INFO("[ModBrowser] Cache saved ({} mods)", mods.size());
     } catch (const std::exception& e) {
-        SPDLOG_WARN("[ModBrowser] Falha cache save: {}", e.what());
+        SPDLOG_WARN("[ModBrowser] Cache save failed: {}", e.what());
     }
 }
 
@@ -339,7 +323,7 @@ static bool LoadCache(std::vector<ModEntry>& out) {
         if (!j.contains("timestamp") || !j.contains("mods")) return false;
         long long ts = j["timestamp"].get<long long>();
         long long now = (long long)std::time(nullptr);
-        if (now - ts > 6 * 3600) { SPDLOG_INFO("[ModBrowser] Cache expirado"); return false; }
+        if (now - ts > 6 * 3600) { SPDLOG_INFO("[ModBrowser] Cache expired"); return false; }
         for (auto& item : j["mods"]) {
             ModEntry m;
             m.id = item.value("id", 0);
@@ -351,7 +335,7 @@ static bool LoadCache(std::vector<ModEntry>& out) {
             m.thumbUrl = item.value("thumbUrl", "");
             out.push_back(std::move(m));
         }
-        SPDLOG_INFO("[ModBrowser] Cache carregado ({} mods)", out.size());
+        SPDLOG_INFO("[ModBrowser] Cache loaded ({} mods)", out.size());
         return !out.empty();
     } catch (...) { return false; }
 }
@@ -373,14 +357,14 @@ static std::string HttpGet(const std::string& host, const std::string& path) {
         });
 
         auto res = cli.Get(path.c_str());
-        if (!res) { ModBrowserState::lastError = "Falha request"; return ""; }
+        if (!res) { ModBrowserState::lastError = "Request failed"; return ""; }
         if (res->status != 200) {
             ModBrowserState::lastError = "HTTP " + std::to_string(res->status);
             return "";
         }
         return res->body;
     } catch (const std::exception& e) {
-        ModBrowserState::lastError = std::string("Excecao: ") + e.what();
+        ModBrowserState::lastError = std::string("Exception: ") + e.what();
         return "";
     }
 }
@@ -404,7 +388,7 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
                 if (value.is_array()) { arr = &value; break; }
             }
         }
-        if (!arr) { ModBrowserState::lastError = "JSON sem array"; return result; }
+        if (!arr) { ModBrowserState::lastError = "JSON has no array"; return result; }
 
         for (auto& item : *arr) {
             if (!item.is_object()) continue;
@@ -447,10 +431,10 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
 }
 
 // ============================================================
-// Fetch (paginado em lotes paralelos + dedup) + thumbnails encadeadas
+// Fetch (parallel batch pagination + dedup) + chained thumbnails
 // ============================================================
 
-static void FetchAllThumbnailsAsync(); // fwd decl
+static void FetchAllThumbnailsAsync();
 
 static void FetchModsAsync() {
     ModBrowserState::fetching = true;
@@ -489,7 +473,7 @@ static void FetchModsAsync() {
 
         for (auto& [page, mods] : results) {
             if (mods.empty()) {
-                SPDLOG_INFO("[ModBrowser] Fim das paginas na {}", page);
+                SPDLOG_INFO("[ModBrowser] End of pages at {}", page);
                 done = true;
                 break;
             }
@@ -504,16 +488,16 @@ static void FetchModsAsync() {
             }
             ModBrowserState::fetchModsSoFar = (int)allMods.size();
 
-            SPDLOG_INFO("[ModBrowser] Pagina {} -> {} mods ({} novos, {} total)",
+            SPDLOG_INFO("[ModBrowser] Page {} -> {} mods ({} new, {} total)",
                         page, mods.size(), novos, allMods.size());
 
             if (novos == 0) {
-                SPDLOG_INFO("[ModBrowser] Pagina {} sem novidade, parando", page);
+                SPDLOG_INFO("[ModBrowser] Page {} had no new items, stopping", page);
                 done = true;
                 break;
             }
             if (mods.size() < 15) {
-                SPDLOG_INFO("[ModBrowser] Pagina {} parcial ({} itens), ultima pagina", page, mods.size());
+                SPDLOG_INFO("[ModBrowser] Page {} partial ({} items), last page", page, mods.size());
                 done = true;
                 break;
             }
@@ -528,9 +512,9 @@ static void FetchModsAsync() {
             ModBrowserState::mods = std::move(allMods);
         }
         SaveCache(ModBrowserState::mods);
-        SPDLOG_INFO("[ModBrowser] {} mods carregados (total).", ModBrowserState::mods.size());
+        SPDLOG_INFO("[ModBrowser] {} mods loaded (total).", ModBrowserState::mods.size());
     } else {
-        SPDLOG_ERROR("[ModBrowser] Falha: {}", ModBrowserState::lastError);
+        SPDLOG_ERROR("[ModBrowser] Failed: {}", ModBrowserState::lastError);
     }
 
     ModBrowserState::fetching = false;
@@ -568,7 +552,7 @@ static void DownloadThumbnailToDisk(int modId, std::string url) {
         auto res = cli.Get(path.c_str());
         if (!res || res->status != 200) {
             SPDLOG_WARN("[ModBrowser] Thumb HTTP {} (mod {})",
-                        res ? std::to_string(res->status) : "sem resposta", modId);
+                        res ? std::to_string(res->status) : "no response", modId);
             std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
             for (auto& m : ModBrowserState::mods) if (m.id == modId) m.imgState = ImageState::Failed;
             return;
@@ -585,7 +569,7 @@ static void DownloadThumbnailToDisk(int modId, std::string url) {
         out.write(res->body.data(), res->body.size());
         out.close();
 
-        SPDLOG_INFO("[ModBrowser] Thumb salva: {} ({} bytes)", diskPath.string(), res->body.size());
+        SPDLOG_INFO("[ModBrowser] Thumb saved: {} ({} bytes)", diskPath.string(), res->body.size());
 
         std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
         for (auto& m : ModBrowserState::mods) {
@@ -596,7 +580,7 @@ static void DownloadThumbnailToDisk(int modId, std::string url) {
             }
         }
     } catch (const std::exception& e) {
-        SPDLOG_WARN("[ModBrowser] Excecao thumb: {}", e.what());
+        SPDLOG_WARN("[ModBrowser] Thumb exception: {}", e.what());
         std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
         for (auto& m : ModBrowserState::mods) if (m.id == modId) m.imgState = ImageState::Failed;
     }
@@ -625,7 +609,7 @@ static void FetchAllThumbnailsAsync() {
         return;
     }
 
-    SPDLOG_INFO("[ModBrowser] Baixando {} thumbnails", jobs.size());
+    SPDLOG_INFO("[ModBrowser] Downloading {} thumbnails", jobs.size());
 
     std::atomic<size_t> nextJob{0};
     const int WORKERS = (int)std::min<size_t>(8, jobs.size());
@@ -645,7 +629,6 @@ static void FetchAllThumbnailsAsync() {
     ModBrowserState::imagesDownloading = false;
 }
 
-// Carrega o arquivo em disco com stb_image e registra via LoadGuiTexture.
 static void UploadPendingThumbnails() {
     auto gui = GetFast3dGui();
     if (!gui) return;
@@ -658,7 +641,7 @@ static void UploadPendingThumbnails() {
         int w = 0, h = 0, ch = 0;
         unsigned char* pix = stbi_load(m.thumbDiskPath.c_str(), &w, &h, &ch, 4);
         if (!pix || w <= 0 || h <= 0) {
-            SPDLOG_WARN("[ModBrowser] stbi_load falhou: {}", m.thumbDiskPath);
+            SPDLOG_WARN("[ModBrowser] stbi_load failed: {}", m.thumbDiskPath);
             if (pix) stbi_image_free(pix);
             m.imgState = ImageState::Failed;
             continue;
@@ -684,27 +667,27 @@ static void UploadPendingThumbnails() {
             m.texId = gui->GetTextureByName(texName);
             if (m.texId) {
                 m.imgState = ImageState::Loaded;
-                SPDLOG_INFO("[ModBrowser] Textura carregada: {} ({}x{})", texName, w, h);
+                SPDLOG_INFO("[ModBrowser] Texture loaded: {} ({}x{})", texName, w, h);
             } else {
                 m.imgState = ImageState::Failed;
-                SPDLOG_WARN("[ModBrowser] GetTextureByName null pra {}", texName);
+                SPDLOG_WARN("[ModBrowser] GetTextureByName null for {}", texName);
             }
         } catch (const std::exception& e) {
             m.imgState = ImageState::Failed;
-            SPDLOG_WARN("[ModBrowser] LoadGuiTexture excecao: {}", e.what());
+            SPDLOG_WARN("[ModBrowser] LoadGuiTexture exception: {}", e.what());
         }
     }
 }
 
 // ============================================================
-// Extracao de zip
+// Zip extraction
 // ============================================================
 
 static bool ExtractModFilesFromZip(const std::filesystem::path& zipPath,
                                    const std::filesystem::path& modsPath) {
     int err = 0;
     zip_t* z = zip_open(zipPath.string().c_str(), ZIP_RDONLY, &err);
-    if (!z) { SPDLOG_ERROR("[ModBrowser] zip_open falhou ({})", err); return false; }
+    if (!z) { SPDLOG_ERROR("[ModBrowser] zip_open failed ({})", err); return false; }
 
     int extracted = 0;
     zip_int64_t n = zip_get_num_entries(z, 0);
@@ -742,10 +725,10 @@ static bool ExtractModFilesFromZip(const std::filesystem::path& zipPath,
         out.close();
         zip_fclose(zf);
         extracted++;
-        SPDLOG_INFO("[ModBrowser] Extraido: {}", fname);
+        SPDLOG_INFO("[ModBrowser] Extracted: {}", fname);
     }
     zip_close(z);
-    SPDLOG_INFO("[ModBrowser] Extraidos {} arquivos", extracted);
+    SPDLOG_INFO("[ModBrowser] Extracted {} files", extracted);
     return extracted > 0;
 }
 
@@ -767,14 +750,14 @@ static void DownloadModAsync(int modId, std::string modName) {
         std::filesystem::path modsPath = GetModsPath();
         std::string baseName = SanitizeFilename(modName);
 
-        SPDLOG_INFO("[ModBrowser] Buscando ProfilePage do mod {}", modId);
+        SPDLOG_INFO("[ModBrowser] Fetching ProfilePage for mod {}", modId);
         std::string profBody = HttpGet(
             "gamebanana.com",
             "/apiv11/Mod/" + std::to_string(modId) + "/ProfilePage");
 
         if (profBody.empty()) {
-            ModBrowserState::lastError = "Falha ao pegar ProfilePage";
-            Notification::Emit({ .message = "Erro: nao consegui ler info do mod" });
+            ModBrowserState::lastError = "Failed to fetch ProfilePage";
+            Notification::Emit({ .message = "Error: couldn't read mod info" });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
@@ -788,8 +771,8 @@ static void DownloadModAsync(int modId, std::string modName) {
             json prof = json::parse(profBody);
             if (!prof.contains("_aFiles") || !prof["_aFiles"].is_array() ||
                 prof["_aFiles"].empty()) {
-                ModBrowserState::lastError = "Mod sem arquivos";
-                Notification::Emit({ .message = "Mod sem arquivos pra baixar" });
+                ModBrowserState::lastError = "Mod has no files";
+                Notification::Emit({ .message = "Mod has no files to download" });
                 ModBrowserState::downloading = false;
                 ModBrowserState::downloadModId = 0;
                 return;
@@ -812,8 +795,8 @@ static void DownloadModAsync(int modId, std::string modName) {
                 if (chosen) break;
             }
             if (!chosen) {
-                ModBrowserState::lastError = "Nenhum arquivo instalavel encontrado (.otr/.o2r/.ootr/.zip)";
-                Notification::Emit({ .message = "Mod sem arquivo instalavel reconhecido" });
+                ModBrowserState::lastError = "No installable file found (.otr/.o2r/.ootr/.zip)";
+                Notification::Emit({ .message = "Mod has no recognized installable file" });
                 ModBrowserState::downloading = false;
                 ModBrowserState::downloadModId = 0;
                 return;
@@ -822,11 +805,11 @@ static void DownloadModAsync(int modId, std::string modName) {
             fileId       = chosen->value("_idRow", 0);
             realFileName = chosen->value("_sFile", "");
             dlUrl        = chosen->value("_sDownloadUrl", "");
-            SPDLOG_INFO("[ModBrowser] Arquivo escolhido: '{}' (id={}) dlUrl='{}'",
+            SPDLOG_INFO("[ModBrowser] Chosen file: '{}' (id={}) dlUrl='{}'",
                         realFileName, fileId, dlUrl);
         } catch (const std::exception& e) {
             ModBrowserState::lastError = std::string("Parse ProfilePage: ") + e.what();
-            Notification::Emit({ .message = "Erro ao ler info do mod" });
+            Notification::Emit({ .message = "Error reading mod info" });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
@@ -838,8 +821,8 @@ static void DownloadModAsync(int modId, std::string modName) {
         }
 
         if (dlUrl.empty()) {
-            ModBrowserState::lastError = "Sem URL de download";
-            Notification::Emit({ .message = "Arquivo invalido no mod" });
+            ModBrowserState::lastError = "No download URL";
+            Notification::Emit({ .message = "Invalid file in mod" });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
@@ -855,13 +838,13 @@ static void DownloadModAsync(int modId, std::string modName) {
 
         std::string host, path;
         if (!ParseUrl(dlUrl, host, path)) {
-            ModBrowserState::lastError = "URL de download invalida";
-            Notification::Emit({ .message = "URL invalida do mod" });
+            ModBrowserState::lastError = "Invalid download URL";
+            Notification::Emit({ .message = "Invalid mod URL" });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
         }
-        SPDLOG_INFO("[ModBrowser] Baixando de https://{}{}", host, path);
+        SPDLOG_INFO("[ModBrowser] Downloading from https://{}{}", host, path);
 
         httplib::Client cli("https://" + host);
         cli.set_follow_location(true);
@@ -877,8 +860,8 @@ static void DownloadModAsync(int modId, std::string modName) {
         std::filesystem::path tempPath = modsPath / (baseName + ".download");
         std::ofstream out(tempPath, std::ios::binary);
         if (!out) {
-            ModBrowserState::lastError = "Nao consegui abrir arquivo";
-            Notification::Emit({ .message = "Erro: nao consegui salvar" });
+            ModBrowserState::lastError = "Couldn't open file";
+            Notification::Emit({ .message = "Error: couldn't save file" });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
@@ -897,22 +880,22 @@ static void DownloadModAsync(int modId, std::string modName) {
         out.close();
 
         if (!res) {
-            ModBrowserState::lastError = "Sem resposta do servidor";
+            ModBrowserState::lastError = "No server response";
             std::error_code ec; std::filesystem::remove(tempPath, ec);
-            Notification::Emit({ .message = "Erro: sem resposta do servidor" });
+            Notification::Emit({ .message = "Error: no server response" });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
         }
 
-        SPDLOG_INFO("[ModBrowser] HTTP {} ({} bytes baixados)",
+        SPDLOG_INFO("[ModBrowser] HTTP {} ({} bytes downloaded)",
                     res->status, ModBrowserState::downloadBytes.load());
 
         if (res->status != 200) {
-            ModBrowserState::lastError = "Download falhou (HTTP " +
+            ModBrowserState::lastError = "Download failed (HTTP " +
                                          std::to_string(res->status) + ")";
             std::error_code ec; std::filesystem::remove(tempPath, ec);
-            Notification::Emit({ .message = "Erro ao baixar " + modName });
+            Notification::Emit({ .message = "Error downloading " + modName });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
@@ -934,50 +917,50 @@ static void DownloadModAsync(int modId, std::string modName) {
                              (unsigned char)magic[0] == 0x3C ||
                              (unsigned char)magic[0] == 0x7B);
         if (isHtmlOrJson && !isZip && !isMpq) {
-            ModBrowserState::lastError = "Servidor retornou HTML/JSON, nao o arquivo";
+            ModBrowserState::lastError = "Server returned HTML/JSON, not the file";
             std::filesystem::remove(tempPath, ec);
-            Notification::Emit({ .message = "Servidor nao entregou o arquivo (tente de novo)" });
+            Notification::Emit({ .message = "Server didn't deliver the file (try again)" });
             ModBrowserState::downloading = false;
             ModBrowserState::downloadModId = 0;
             return;
         }
 
         if (isZip) {
-            SPDLOG_INFO("[ModBrowser] ZIP detectado, extraindo...");
+            SPDLOG_INFO("[ModBrowser] ZIP detected, extracting...");
             bool ok = ExtractModFilesFromZip(tempPath, modsPath);
             if (ok) {
                 std::filesystem::remove(tempPath, ec);
-                Notification::Emit({ .message = "Instalado: " + modName + " (reinicie)" });
+                Notification::Emit({ .message = "Installed: " + modName + " (restart)" });
             } else {
                 std::filesystem::path finalZip = modsPath / (baseName + ".zip");
                 std::filesystem::rename(tempPath, finalZip, ec);
-                Notification::Emit({ .message = "Baixado (sem .otr dentro): " + modName });
+                Notification::Emit({ .message = "Downloaded (no .otr inside): " + modName });
             }
         } else if (realExt == ".otr" || realExt == ".o2r" || realExt == ".ootr" || isMpq) {
             std::filesystem::path finalPath = modsPath / (baseName + ".otr");
             std::filesystem::rename(tempPath, finalPath, ec);
-            SPDLOG_INFO("[ModBrowser] Salvo: {}", finalPath.string());
-            Notification::Emit({ .message = "Instalado: " + modName + " (reinicie)" });
+            SPDLOG_INFO("[ModBrowser] Saved: {}", finalPath.string());
+            Notification::Emit({ .message = "Installed: " + modName + " (restart)" });
         } else {
             std::string ext = realExt.empty() ? ".bin" : realExt;
             std::filesystem::path finalPath = modsPath / (baseName + ext);
             std::filesystem::rename(tempPath, finalPath, ec);
-            SPDLOG_WARN("[ModBrowser] Extensao desconhecida '{}', salvo como {}",
+            SPDLOG_WARN("[ModBrowser] Unknown extension '{}', saved as {}",
                         ext, finalPath.string());
-            Notification::Emit({ .message = "Baixado: " + modName + ext });
+            Notification::Emit({ .message = "Downloaded: " + modName + ext });
         }
 
     } catch (const std::exception& e) {
-        ModBrowserState::lastError = std::string("Excecao: ") + e.what();
-        SPDLOG_ERROR("[ModBrowser] Excecao download: {}", e.what());
-        Notification::Emit({ .message = "Erro: " + std::string(e.what()) });
+        ModBrowserState::lastError = std::string("Exception: ") + e.what();
+        SPDLOG_ERROR("[ModBrowser] Download exception: {}", e.what());
+        Notification::Emit({ .message = "Error: " + std::string(e.what()) });
     }
     ModBrowserState::downloading = false;
     ModBrowserState::downloadModId = 0;
 }
 
 // ============================================================
-// Detalhes (inline / expansivel, por mod)
+// Details (inline / expandable, per mod)
 // ============================================================
 
 static void FetchModDetailsAsync(int modId) {
@@ -991,7 +974,7 @@ static void FetchModDetailsAsync(int modId) {
     std::string path = "/apiv11/Mod/" + std::to_string(modId) + "/ProfilePage";
     std::string body = HttpGet("gamebanana.com", path);
 
-    std::string text = "(sem descricao)";
+    std::string text = "(no description)";
     if (!body.empty()) {
         try {
             json j = json::parse(body);
@@ -1020,19 +1003,19 @@ static void DrawModList(WidgetInfo& info) {
     std::lock_guard<std::mutex> lock(ModBrowserState::modsMutex);
 
     if (ModBrowserState::fetching) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Carregando mods... (%d encontrados ate agora)",
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Loading mods... (%d found so far)",
                             ModBrowserState::fetchModsSoFar.load());
         return;
     }
     if (!ModBrowserState::lastError.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Erro: %s",
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Error: %s",
                            ModBrowserState::lastError.c_str());
     }
     if (ModBrowserState::downloading) {
         std::string nameCopy;
         { std::lock_guard<std::mutex> dl(ModBrowserState::downloadMutex);
           nameCopy = ModBrowserState::downloadModName; }
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Baixando: %s", nameCopy.c_str());
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Downloading: %s", nameCopy.c_str());
         size_t cur = ModBrowserState::downloadBytes;
         size_t tot = ModBrowserState::downloadTotal;
         if (tot > 0) {
@@ -1040,7 +1023,7 @@ static void DrawModList(WidgetInfo& info) {
             ImGui::ProgressBar(frac, ImVec2(-1, 0),
                 (FormatBytes(cur) + " / " + FormatBytes(tot)).c_str());
         } else {
-            ImGui::Text("Recebido: %s", FormatBytes(cur).c_str());
+            ImGui::Text("Received: %s", FormatBytes(cur).c_str());
         }
         ImGui::Separator();
     }
@@ -1054,11 +1037,11 @@ static void DrawModList(WidgetInfo& info) {
         ImGui::Separator();
     }
     if (ModBrowserState::mods.empty()) {
-        ImGui::TextDisabled("Nenhum mod. Clica em 'Atualizar lista'.");
+        ImGui::TextDisabled("No mods. Click 'Update mod list'.");
         return;
     }
 
-    ImGui::Text("%zu mods encontrados", ModBrowserState::mods.size());
+    ImGui::Text("%zu mods found", ModBrowserState::mods.size());
     ImGui::Separator();
 
     std::string filter = ModBrowserState::searchBuf;
@@ -1096,16 +1079,16 @@ static void DrawModList(WidgetInfo& info) {
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", m.name.c_str());
         if (!m.author.empty() || !m.category.empty()) {
             std::string sub;
-            if (!m.author.empty())   sub += "por " + m.author;
+            if (!m.author.empty())   sub += "by " + m.author;
             if (!m.category.empty()) sub += (sub.empty() ? "" : "  |  ") + m.category;
             ImGui::TextDisabled("%s", sub.c_str());
         }
 
-        if (ImGui::Button("Abrir pagina")) {
+        if (ImGui::Button("Open page")) {
             if (!m.profileUrl.empty()) SDL_OpenURL(m.profileUrl.c_str());
         }
         ImGui::SameLine();
-        if (ImGui::Button(m.detailsExpanded ? "Fechar detalhes" : "Detalhes")) {
+        if (ImGui::Button(m.detailsExpanded ? "Close details" : "Details")) {
             m.detailsExpanded = !m.detailsExpanded;
             if (m.detailsExpanded && !m.detailsFetched && !m.detailsFetching) {
                 std::thread(FetchModDetailsAsync, m.id).detach();
@@ -1117,7 +1100,7 @@ static void DrawModList(WidgetInfo& info) {
                                ModBrowserState::downloadModId == m.id;
         bool anyDownloading = ModBrowserState::downloading;
         ImGui::BeginDisabled(anyDownloading);
-        if (ImGui::Button(downloadingThis ? "Baixando..." : "Baixar")) {
+        if (ImGui::Button(downloadingThis ? "Downloading..." : "Download")) {
             std::thread(DownloadModAsync, m.id, m.name).detach();
         }
         ImGui::EndDisabled();
@@ -1126,7 +1109,7 @@ static void DrawModList(WidgetInfo& info) {
         if (m.detailsExpanded) {
             ImGui::Indent();
             if (m.detailsFetching) {
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Carregando detalhes...");
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Loading details...");
             } else {
                 ImGui::BeginChild("##inlineDetails", ImVec2(0, 140), true);
                 ImGui::TextWrapped("%s", m.detailsText.c_str());
@@ -1144,7 +1127,7 @@ static void DrawModList(WidgetInfo& info) {
 }
 
 // ============================================================
-// Registro
+// Registration
 // ============================================================
 
 void SohMenu::AddMenuModBrowser() {
@@ -1154,51 +1137,50 @@ void SohMenu::AddMenuModBrowser() {
     path = { "Mod Browser", "Browse", SECTION_COLUMN_1 };
     AddSidebarEntry("Mod Browser", path.sidebarName, 1);
 
-    AddWidget(path, "Acoes", WIDGET_SEPARATOR_TEXT);
-    AddWidget(path, "Atualizar lista de mods", WIDGET_BUTTON)
+    AddWidget(path, "Actions", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Update mod list", WIDGET_BUTTON)
         .Callback([](WidgetInfo& info) {
             if (ModBrowserState::fetching) return;
             std::thread(FetchModsAsync).detach();
-            Notification::Emit({ .message = "Buscando mods..." });
+            Notification::Emit({ .message = "Fetching mods..." });
         });
-    AddWidget(path, "Baixar/retentar thumbnails", WIDGET_BUTTON)
+    AddWidget(path, "Download/retry thumbnails", WIDGET_BUTTON)
         .Callback([](WidgetInfo& info) {
             if (ModBrowserState::imagesDownloading) return;
             std::thread(FetchAllThumbnailsAsync).detach();
-            Notification::Emit({ .message = "Baixando imagens..." });
+            Notification::Emit({ .message = "Downloading images..." });
         });
 
-    // ---- Novos botoes ----
-    AddWidget(path, "Reiniciar jogo", WIDGET_BUTTON)
+    AddWidget(path, "Restart game", WIDGET_BUTTON)
         .Callback([](WidgetInfo& info) {
-            SPDLOG_INFO("[ModBrowser] Reiniciar jogo solicitado pelo usuario");
+            SPDLOG_INFO("[ModBrowser] Restart requested by user");
             RestartGame();
         });
-    AddWidget(path, "Abrir pasta de mods", WIDGET_BUTTON)
+    AddWidget(path, "Open mods folder", WIDGET_BUTTON)
         .Callback([](WidgetInfo& info) {
             OpenModsFolder();
         });
 
-    AddWidget(path, "Filtrar", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Filter", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "##ModBrowserFilter", WIDGET_CUSTOM).CustomFunction([](WidgetInfo& info) {
-        ImGui::InputTextWithHint("##ModBrowserFilter", "Buscar...",
+        ImGui::InputTextWithHint("##ModBrowserFilter", "Search...",
                                  ModBrowserState::searchBuf, IM_ARRAYSIZE(ModBrowserState::searchBuf));
     });
 
-    AddWidget(path, "Resultados", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Results", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "##ModBrowserList", WIDGET_CUSTOM).CustomFunction(DrawModList);
 
-    path.sidebarName = "Sobre";
+    path.sidebarName = "About";
     AddSidebarEntry("Mod Browser", path.sidebarName, 1);
     path.column = SECTION_COLUMN_1;
 
     AddWidget(path, "Info", WIDGET_SEPARATOR_TEXT);
     AddWidget(path,
-              "Mod Browser experimental para SoH.\n"
-              "Fonte: GameBanana API v11.\n"
-              "Auto-install de .otr/.o2r/zips.\n"
-              "Atualizar a lista ja baixa as thumbnails junto.\n"
-              "Clique em Detalhes pra expandir a descricao do mod.",
+              "Experimental Mod Browser for SoH.\n"
+              "Source: GameBanana API v11.\n"
+              "Auto-install of .otr/.o2r/zip files.\n"
+              "Updating the list also downloads thumbnails.\n"
+              "Click Details to expand a mod's description.",
               WIDGET_TEXT);
 }
 
