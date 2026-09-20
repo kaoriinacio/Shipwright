@@ -439,7 +439,7 @@ static void UploadPendingThumbnails() {
 
         ImVec4 tint(1.0f, 1.0f, 1.0f, 1.0f);
         try {
-            gui->LoadGuiTexture(texName, tex, tint);
+            gui->LoadGuiTexture(texName, tex, "", tint);
             m.texId = gui->GetTextureByName(texName);
             if (m.texId) {
                 m.imgState = ImageState::Loaded;
