@@ -402,6 +402,28 @@ if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
 endif()
 
 ################################################################################
+# libzip pra extrair .otr/.o2r dos zips baixados
+################################################################################
+find_package(libzip CONFIG QUIET)
+if(libzip_FOUND)
+    target_link_libraries(soh PRIVATE libzip::zip)
+    message(STATUS "libzip encontrado via CONFIG: libzip::zip")
+else()
+    # Fallback: procura por zip.h e libzip por nome
+    find_path(LIBZIP_INCLUDE_DIR zip.h)
+    find_library(LIBZIP_LIBRARY NAMES zip libzip)
+    if(LIBZIP_LIBRARY)
+        target_link_libraries(soh PRIVATE ${LIBZIP_LIBRARY})
+        if(LIBZIP_INCLUDE_DIR)
+            target_include_directories(soh PRIVATE ${LIBZIP_INCLUDE_DIR})
+        endif()
+        message(STATUS "libzip encontrado por path: ${LIBZIP_LIBRARY}")
+    else()
+        message(WARNING "libzip nao encontrado! O auto-install de mods nao vai funcionar.")
+    endif()
+endif()
+
+################################################################################
 # Discord Rich Presence nativo (IPC raw, sem SDK, sem DLL extra)
 ################################################################################
 target_sources(soh PRIVATE
