@@ -309,20 +309,50 @@ static void FetchModsAsync() {
     ModBrowserState::fetching = true;
     ModBrowserState::lastError.clear();
 
-    const std::string path = "/apiv11/Game/16121/Subfeed?_nPage=1&_sSort=default&_csvModelInclusions=Mod";
-    std::string body = HttpGet("gamebanana.com", path);
+    std::vector<ModEntry> allMods;
+    const int MAX_PAGES = 20;   // ~1000 mods max (20 * 50)
+    const int PER_PAGE  = 50;
 
-    if (!body.empty()) {
+    for (int page = 1; page <= MAX_PAGES; ++page) {
+        std::string path = "/apiv11/Game/16121/Subfeed"
+                           "?_nPage=" + std::to_string(page) +
+                           "&_nPerpage=" + std::to_string(PER_PAGE) +
+                           "&_sSort=default"
+                           "&_csvModelInclusions=Mod";
+
+        std::string body = HttpGet("gamebanana.com", path);
+        if (body.empty()) {
+            SPDLOG_WARN("[ModBrowser] Pagina {} vazia, parando", page);
+            break;
+        }
+
         auto mods = ParseGameBananaMods(body);
+        if (mods.empty()) {
+            SPDLOG_INFO("[ModBrowser] Fim das paginas na {}", page);
+            break;
+        }
+
+        SPDLOG_INFO("[ModBrowser] Pagina {} -> {} mods", page, mods.size());
+        allMods.insert(allMods.end(),
+                       std::make_move_iterator(mods.begin()),
+                       std::make_move_iterator(mods.end()));
+
+        if ((int)mods.size() < PER_PAGE) break;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    if (!allMods.empty()) {
         {
             std::lock_guard<std::mutex> lock(ModBrowserState::modsMutex);
-            ModBrowserState::mods = std::move(mods);
+            ModBrowserState::mods = std::move(allMods);
         }
         SaveCache(ModBrowserState::mods);
-        SPDLOG_INFO("[ModBrowser] {} mods carregados.", ModBrowserState::mods.size());
+        SPDLOG_INFO("[ModBrowser] {} mods carregados (total).", ModBrowserState::mods.size());
     } else {
         SPDLOG_ERROR("[ModBrowser] Falha: {}", ModBrowserState::lastError);
     }
+
     ModBrowserState::fetching = false;
 }
 
@@ -523,6 +553,83 @@ static void DownloadModAsync(int modId, std::string modName) {
     ModBrowserState::downloadTotal = 0;
 
     try {
+        std::filesystem::path modsPath = GetModsPath();
+        std::string baseName = SanitizeFilename(modName);
+
+        // ---------- Passo 1: pega a lista de arquivos via ProfilePage ----------
+        std::string profBody = HttpGet(
+            "gamebanana.com",
+            "/apiv11/Mod/" + std::to_string(modId) + "/ProfilePage");
+
+        if (profBody.empty()) {
+            ModBrowserState::lastError = "Falha ao pegar ProfilePage";
+            Notification::Emit({ .message = "Erro: nao consegui ler info do mod" });
+            ModBrowserState::downloading = false;
+            ModBrowserState::downloadModId = 0;
+            return;
+        }
+
+        int fileId = 0;
+        std::string realFileName;
+        std::string realExt;
+        try {
+            json prof = json::parse(profBody);
+            if (!prof.contains("_aFiles") || !prof["_aFiles"].is_array() ||
+                prof["_aFiles"].empty()) {
+                ModBrowserState::lastError = "Mod sem arquivos";
+                Notification::Emit({ .message = "Mod sem arquivos pra baixar" });
+                ModBrowserState::downloading = false;
+                ModBrowserState::downloadModId = 0;
+                return;
+            }
+
+            // Prefere .otr/.o2r/.ootr/.zip; se nenhum bater, usa o primeiro.
+            const json* chosen = nullptr;
+            for (auto& f : prof["_aFiles"]) {
+                if (!f.is_object()) continue;
+                std::string fname = f.value("_sFile", "");
+                std::string lower = fname;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                for (const char* e : { ".otr", ".o2r", ".ootr", ".zip" }) {
+                    size_t el = std::strlen(e);
+                    if (lower.size() >= el &&
+                        lower.compare(lower.size() - el, el, e) == 0) {
+                        chosen = &f;
+                        break;
+                    }
+                }
+                if (chosen) break;
+            }
+            if (!chosen) chosen = &prof["_aFiles"][0];
+
+            fileId       = chosen->value("_idRow", 0);
+            realFileName = chosen->value("_sFile", "");
+            SPDLOG_INFO("[ModBrowser] Arquivo escolhido: '{}' (id={})", realFileName, fileId);
+        } catch (const std::exception& e) {
+            ModBrowserState::lastError = std::string("Parse ProfilePage: ") + e.what();
+            Notification::Emit({ .message = "Erro ao ler info do mod" });
+            ModBrowserState::downloading = false;
+            ModBrowserState::downloadModId = 0;
+            return;
+        }
+
+        if (fileId <= 0) {
+            ModBrowserState::lastError = "Arquivo sem _idRow";
+            Notification::Emit({ .message = "Arquivo invalido no mod" });
+            ModBrowserState::downloading = false;
+            ModBrowserState::downloadModId = 0;
+            return;
+        }
+
+        if (!realFileName.empty()) {
+            auto dot = realFileName.find_last_of('.');
+            if (dot != std::string::npos) {
+                realExt = realFileName.substr(dot);
+                std::transform(realExt.begin(), realExt.end(), realExt.begin(), ::tolower);
+            }
+        }
+
+        // ---------- Passo 2: baixa o arquivo real ----------
         httplib::Client cli("https://gamebanana.com");
         cli.set_follow_location(true);
         cli.set_connection_timeout(10, 0);
@@ -530,10 +637,7 @@ static void DownloadModAsync(int modId, std::string modName) {
         cli.set_write_timeout(180, 0);
         cli.enable_server_certificate_verification(false);
 
-        std::filesystem::path modsPath = GetModsPath();
-        std::string baseName = SanitizeFilename(modName);
         std::filesystem::path tempPath = modsPath / (baseName + ".download");
-
         std::ofstream out(tempPath, std::ios::binary);
         if (!out) {
             ModBrowserState::lastError = "Nao consegui abrir arquivo";
@@ -543,7 +647,9 @@ static void DownloadModAsync(int modId, std::string modName) {
             return;
         }
 
-        std::string url = "/mods/download/" + std::to_string(modId);
+        std::string url = "/apiv11/Mod/" + std::to_string(modId) +
+                          "/Download/" + std::to_string(fileId);
+
         auto res = cli.Get(url.c_str(),
             [&](const char* data, size_t len) {
                 out.write(data, len);
@@ -566,47 +672,7 @@ static void DownloadModAsync(int modId, std::string modName) {
             return;
         }
 
-        // Extrai nome do arquivo do header Content-Disposition
-        std::string serverFilename;
-        if (res->has_header("Content-Disposition")) {
-            std::string cd = res->get_header_value("Content-Disposition");
-            SPDLOG_INFO("[ModBrowser] Content-Disposition: {}", cd);
-
-            auto pos = cd.find("filename*=");
-            if (pos != std::string::npos) {
-                std::string rest = cd.substr(pos + 10);
-                auto quote = rest.find("''");
-                if (quote != std::string::npos) {
-                    serverFilename = rest.substr(quote + 2);
-                    auto end = serverFilename.find(';');
-                    if (end != std::string::npos) serverFilename = serverFilename.substr(0, end);
-                    if (!serverFilename.empty() && serverFilename.front() == '"') serverFilename.erase(0, 1);
-                    if (!serverFilename.empty() && serverFilename.back()  == '"') serverFilename.pop_back();
-                }
-            }
-            if (serverFilename.empty()) {
-                auto pos2 = cd.find("filename=");
-                if (pos2 != std::string::npos) {
-                    std::string rest = cd.substr(pos2 + 9);
-                    auto end = rest.find(';');
-                    if (end != std::string::npos) rest = rest.substr(0, end);
-                    if (!rest.empty() && rest.front() == '"') rest.erase(0, 1);
-                    if (!rest.empty() && rest.back()  == '"') rest.pop_back();
-                    serverFilename = rest;
-                }
-            }
-        }
-
-        std::string serverExt;
-        if (!serverFilename.empty()) {
-            auto dot = serverFilename.find_last_of('.');
-            if (dot != std::string::npos) {
-                serverExt = serverFilename.substr(dot);
-                std::transform(serverExt.begin(), serverExt.end(), serverExt.begin(), ::tolower);
-            }
-        }
-        SPDLOG_INFO("[ModBrowser] Extensao do servidor: '{}' (arquivo: '{}')", serverExt, serverFilename);
-
+        // ---------- Detecção por magic bytes ----------
         char magic[8] = {0};
         { std::ifstream in(tempPath, std::ios::binary); in.read(magic, 8); }
         SPDLOG_INFO("[ModBrowser] Magic: {:02X} {:02X} {:02X} {:02X}  ({})",
@@ -619,7 +685,20 @@ static void DownloadModAsync(int modId, std::string modName) {
 
         std::error_code ec;
 
-        if (serverExt == ".otr" || serverExt == ".o2r" || serverExt == ".ootr" || isMpq) {
+        // Se vier HTML/JSON em vez de arquivo, cancela.
+        bool isHtmlOrJson = ((unsigned char)magic[0] == 0x20 ||
+                             (unsigned char)magic[0] == 0x3C ||  // '<'
+                             (unsigned char)magic[0] == 0x7B);   // '{'
+        if (isHtmlOrJson && !isZip && !isMpq) {
+            ModBrowserState::lastError = "Servidor retornou HTML/JSON, nao o arquivo";
+            std::filesystem::remove(tempPath, ec);
+            Notification::Emit({ .message = "Servidor nao entregou o arquivo (tente de novo)" });
+            ModBrowserState::downloading = false;
+            ModBrowserState::downloadModId = 0;
+            return;
+        }
+
+        if (realExt == ".otr" || realExt == ".o2r" || realExt == ".ootr" || isMpq) {
             std::filesystem::path finalPath = modsPath / (baseName + ".otr");
             std::filesystem::rename(tempPath, finalPath, ec);
             SPDLOG_INFO("[ModBrowser] Salvo: {}", finalPath.string());
@@ -636,10 +715,11 @@ static void DownloadModAsync(int modId, std::string modName) {
                 Notification::Emit({ .message = "Baixado (sem .otr dentro): " + modName });
             }
         } else {
-            std::string ext = serverExt.empty() ? ".bin" : serverExt;
+            std::string ext = realExt.empty() ? ".bin" : realExt;
             std::filesystem::path finalPath = modsPath / (baseName + ext);
             std::filesystem::rename(tempPath, finalPath, ec);
-            SPDLOG_WARN("[ModBrowser] Extensao desconhecida '{}', salvo como {}", ext, finalPath.string());
+            SPDLOG_WARN("[ModBrowser] Extensao desconhecida '{}', salvo como {}",
+                        ext, finalPath.string());
             Notification::Emit({ .message = "Baixado: " + modName + ext });
         }
 
