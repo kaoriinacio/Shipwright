@@ -2,8 +2,10 @@
 #include <soh/Notification/Notification.h>
 #include <soh/OTRGlobals.h>
 
+#include <spdlog/spdlog.h>
+
 #define CPPHTTPLIB_OPENSSL_SUPPORT
-#include "httplib.h"
+#include <httplib.h>
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -12,6 +14,7 @@
 #include <thread>
 #include <atomic>
 #include <algorithm>
+#include <exception>
 
 namespace SohGui {
 
@@ -35,17 +38,21 @@ namespace ModBrowserState {
     static char                  searchBuf[128] = "";
 }
 
+// ---------- HTTP GET via httplib (HTTPS + follow redirect) ----------
 static std::string HttpGet(const std::string& host, const std::string& path) {
     try {
         httplib::Client cli("https://" + host);
         cli.set_follow_location(true);
-        cli.set_connection_timeout(10);
-        cli.set_read_timeout(20);
+        cli.set_connection_timeout(10, 0);
+        cli.set_read_timeout(20, 0);
+        cli.set_write_timeout(20, 0);
         cli.enable_server_certificate_verification(false);
 
         auto res = cli.Get(path.c_str());
         if (!res) {
-            ModBrowserState::lastError = "Falha: " + httplib::to_string(res.error());
+            // fallback: usa codigo numerico se to_string nao existir na versao
+            ModBrowserState::lastError = "Falha request (err code " +
+                std::to_string(static_cast<int>(res.error())) + ")";
             return "";
         }
         if (res->status != 200) {
@@ -56,9 +63,13 @@ static std::string HttpGet(const std::string& host, const std::string& path) {
     } catch (const std::exception& e) {
         ModBrowserState::lastError = std::string("Excecao: ") + e.what();
         return "";
+    } catch (...) {
+        ModBrowserState::lastError = "Excecao desconhecida";
+        return "";
     }
 }
 
+// ---------- Parse do JSON do GameBanana ----------
 static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
     std::vector<ModEntry> result;
     try {
@@ -70,30 +81,39 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
         for (auto& item : j) {
             if (!item.contains("_sModelName")) continue;
             if (item["_sModelName"] != "Mod") continue;
+
             ModEntry m;
             if (item.contains("_idRow"))       m.id = item["_idRow"].get<int>();
             if (item.contains("_sName"))       m.name = item["_sName"].get<std::string>();
             if (item.contains("_sProfileUrl")) m.profileUrl = item["_sProfileUrl"].get<std::string>();
-            if (item.contains("_aSubmitter") && item["_aSubmitter"].contains("_sName"))
+            if (item.contains("_aSubmitter") && item["_aSubmitter"].is_object() &&
+                item["_aSubmitter"].contains("_sName"))
                 m.author = item["_aSubmitter"]["_sName"].get<std::string>();
-            if (item.contains("_aCategory") && item["_aCategory"].contains("_sName"))
+            if (item.contains("_aCategory") && item["_aCategory"].is_object() &&
+                item["_aCategory"].contains("_sName"))
                 m.category = item["_aCategory"]["_sName"].get<std::string>();
+
             if (m.id > 0)
                 m.downloadUrl = "https://gamebanana.com/mods/download/" + std::to_string(m.id);
+
             result.push_back(std::move(m));
         }
     } catch (const std::exception& e) {
-        ModBrowserState::lastError = std::string("Parse JSON falhou: ") + e.what();
+        ModBrowserState::lastError = std::string("Parse JSON: ") + e.what();
     }
     return result;
 }
 
+// ---------- Worker em thread ----------
 static void FetchModsAsync() {
     ModBrowserState::fetching = true;
     ModBrowserState::lastError.clear();
+
     const std::string host = "gamebanana.com";
     const std::string path = "/apiv11/Game/5689/Subfeed?_nPage=1&_sSort=default&_csvModelInclusions=Mod";
+
     std::string body = HttpGet(host, path);
+
     if (!body.empty()) {
         auto mods = ParseGameBananaMods(body);
         {
@@ -107,23 +127,29 @@ static void FetchModsAsync() {
     ModBrowserState::fetching = false;
 }
 
+// ---------- UI: lista de mods ----------
 static void DrawModList(WidgetInfo& info) {
     std::lock_guard<std::mutex> lock(ModBrowserState::modsMutex);
+
     if (ModBrowserState::fetching) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Carregando mods...");
         return;
     }
     if (!ModBrowserState::lastError.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Erro: %s", ModBrowserState::lastError.c_str());
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Erro: %s",
+                           ModBrowserState::lastError.c_str());
     }
     if (ModBrowserState::mods.empty()) {
         ImGui::TextDisabled("Nenhum mod. Clica em 'Atualizar lista'.");
         return;
     }
+
     ImGui::Text("%zu mods encontrados", ModBrowserState::mods.size());
     ImGui::Separator();
+
     std::string filter = ModBrowserState::searchBuf;
     std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
+
     ImGui::BeginChild("ModListScroll", ImVec2(0, 400), true);
     for (auto& m : ModBrowserState::mods) {
         if (!filter.empty()) {
@@ -133,13 +159,16 @@ static void DrawModList(WidgetInfo& info) {
         }
         ImGui::PushID(m.id);
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", m.name.c_str());
-        if (!m.author.empty()) ImGui::TextDisabled("por %s", m.author.c_str());
+        if (!m.author.empty())   ImGui::TextDisabled("por %s", m.author.c_str());
         if (!m.category.empty()) { ImGui::SameLine(); ImGui::TextDisabled(" [%s]", m.category.c_str()); }
-        if (ImGui::Button("Abrir pagina")) SPDLOG_INFO("[ModBrowser] Abrir: {}", m.profileUrl);
+
+        if (ImGui::Button("Abrir pagina")) {
+            SPDLOG_INFO("[ModBrowser] Abrir: {}", m.profileUrl);
+        }
         ImGui::SameLine();
         if (ImGui::Button("Baixar")) {
             SPDLOG_INFO("[ModBrowser] Baixar {} -> {}", m.id, m.downloadUrl);
-            Notification::Emit({ .message = "Download: Fase 5." });
+            Notification::Emit({ .message = "Download: Fase 5 ainda nao implementada." });
         }
         ImGui::Separator();
         ImGui::PopID();
@@ -147,6 +176,7 @@ static void DrawModList(WidgetInfo& info) {
     ImGui::EndChild();
 }
 
+// ---------- Registro do menu ----------
 void SohMenu::AddMenuModBrowser() {
     AddMenuEntry("Mod Browser", CVAR_SETTING("Menu.ModBrowserSidebarSection"));
     WidgetPath path;
@@ -155,7 +185,6 @@ void SohMenu::AddMenuModBrowser() {
     AddSidebarEntry("Mod Browser", path.sidebarName, 1);
 
     AddWidget(path, "Acoes", WIDGET_SEPARATOR_TEXT);
-
     AddWidget(path, "Atualizar lista de mods", WIDGET_BUTTON)
         .Callback([](WidgetInfo& info) {
             if (ModBrowserState::fetching) return;
@@ -180,7 +209,7 @@ void SohMenu::AddMenuModBrowser() {
     AddWidget(path,
               "Mod Browser experimental para SoH.\n"
               "Fonte: GameBanana API v11.\n"
-              "Fase 3/6.",
+              "Fase 3/6 (fetch + listagem).",
               WIDGET_TEXT);
 }
 
