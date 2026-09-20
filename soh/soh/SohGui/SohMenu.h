@@ -26,6 +26,9 @@ void UpdateMenuTricks();
 void UpdateMenuLocations();
 void MarkRandomizerMenusDirty();
 
+// Init do Mod Browser: carrega cache local
+void ModBrowserInit();
+
 class SohMenu : public Ship::Menu {
   public:
     SohMenu(const std::string& consoleVariable, const std::string& name);
