@@ -24,7 +24,7 @@
 #include "httplib.h"
 #include <nlohmann/json.hpp>
 
-#include <SDL3/SDL.h>
+#include <SDL2/SDL.h>
 #include <zip.h>
 
 #include <string>
