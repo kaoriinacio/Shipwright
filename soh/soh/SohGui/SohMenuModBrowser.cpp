@@ -85,6 +85,11 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
     std::vector<ModEntry> result;
     try {
         json j = json::parse(body);
+        
+        // DEBUG: loga o que veio
+        SPDLOG_INFO("[ModBrowser] Resposta (primeiros 500 chars): {}", 
+                    body.substr(0, std::min<size_t>(500, body.size())));
+        
         if (!j.is_array()) {
             ModBrowserState::lastError = "JSON nao e array";
             return result;
