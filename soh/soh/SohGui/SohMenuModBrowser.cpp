@@ -47,6 +47,20 @@
 #include <cstdio>
 #include <deque>
 
+// ============================================================
+// Plataforma: headers pra restart / abrir pasta
+// ============================================================
+#ifdef _WIN32
+    #include <windows.h>
+    #include <shellapi.h>
+#else
+    #include <unistd.h>
+    #include <sys/types.h>
+    #ifdef __APPLE__
+        #include <mach-o/dyld.h>
+    #endif
+#endif
+
 namespace SohGui {
 
 using namespace UIWidgets;
@@ -74,7 +88,6 @@ struct ModEntry {
     std::string    thumbDiskPath;
     ImTextureID    texId = nullptr;
 
-    // Detalhes expansiveis inline (substitui a antiga aba "Detalhes" separada)
     bool        detailsExpanded = false;
     bool        detailsFetching = false;
     bool        detailsFetched  = false;
@@ -186,6 +199,111 @@ static std::shared_ptr<Fast::Fast3dGui> GetFast3dGui() {
     auto gui = win->GetGui();
     if (!gui) return nullptr;
     return std::dynamic_pointer_cast<Fast::Fast3dGui>(gui);
+}
+
+// ============================================================
+// Restart + abrir pasta
+// ============================================================
+
+// Descobre o caminho completo do executavel atual, por plataforma.
+static std::string GetExecutablePath() {
+#ifdef _WIN32
+    char buf[MAX_PATH] = {0};
+    DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) return std::string(buf, n);
+    return "";
+#elif defined(__APPLE__)
+    char buf[4096] = {0};
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) return std::string(buf);
+    return "";
+#else
+    char buf[4096] = {0};
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = '\0'; return std::string(buf); }
+    return "";
+#endif
+}
+
+// Fecha o jogo atual de forma "limpa" mandando um SDL_QUIT pro main loop.
+// Nao usa exit() pra nao pular shutdown de save/config.
+static void RequestGameQuit() {
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_QUIT;
+    SDL_PushEvent(&ev);
+}
+
+// Reinicia o jogo: spawna um novo processo do exe atual e pede pra fechar.
+static void RestartGame() {
+    std::string exe = GetExecutablePath();
+    if (exe.empty()) {
+        Notification::Emit({ .message = "Nao consegui achar o executavel do jogo" });
+        SPDLOG_ERROR("[ModBrowser] GetExecutablePath retornou vazio");
+        return;
+    }
+
+    std::filesystem::path exePath(exe);
+    std::filesystem::path exeDir = exePath.parent_path();
+    SPDLOG_INFO("[ModBrowser] Restart: exe='{}' cwd='{}'", exe, exeDir.string());
+
+#ifdef _WIN32
+    // ShellExecuteA funciona bem com caminhos com espaco/parenteses (ex:
+    // "soh-windows (1)"), sem shell parsing. "open" lanca .exe direto.
+    HINSTANCE r = ShellExecuteA(
+        nullptr, "open", exe.c_str(), nullptr,
+        exeDir.string().c_str(), SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(r) <= 32) {
+        SPDLOG_ERROR("[ModBrowser] ShellExecuteA falhou ({})", (long long)(INT_PTR)r);
+        Notification::Emit({ .message = "Falha ao reiniciar (ShellExecute)" });
+        return;
+    }
+#else
+    // Unix: fork + exec, com setsid pra desacoplar o novo processo do atual
+    // (senao o filho morre junto quando o pai sai).
+    pid_t pid = fork();
+    if (pid < 0) {
+        SPDLOG_ERROR("[ModBrowser] fork falhou");
+        Notification::Emit({ .message = "Falha ao reiniciar (fork)" });
+        return;
+    }
+    if (pid == 0) {
+        // Filho
+        setsid();
+        if (!exeDir.empty()) {
+            (void)chdir(exeDir.string().c_str());
+        }
+        execl(exe.c_str(), exe.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+    // Pai segue pra pedir quit abaixo
+#endif
+
+    SPDLOG_INFO("[ModBrowser] Restart enviado, pedindo quit...");
+    RequestGameQuit();
+}
+
+// Abre a pasta de mods no explorador de arquivos do SO.
+static void OpenModsFolder() {
+    std::filesystem::path modsPath = GetModsPath();
+    std::string p = modsPath.string();
+    SPDLOG_INFO("[ModBrowser] Abrindo pasta: {}", p);
+
+#ifdef _WIN32
+    HINSTANCE r = ShellExecuteA(
+        nullptr, "open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(r) <= 32) {
+        SPDLOG_ERROR("[ModBrowser] ShellExecuteA falhou ({})", (long long)(INT_PTR)r);
+        Notification::Emit({ .message = "Falha ao abrir pasta" });
+    }
+#elif defined(__APPLE__)
+    std::string cmd = "open \"" + p + "\"";
+    std::system(cmd.c_str());
+#else
+    // Linux: tenta xdg-open, senao gio open (fallback comum em distros GTK)
+    std::string cmd = "xdg-open \"" + p + "\" >/dev/null 2>&1 &";
+    std::system(cmd.c_str());
+#endif
 }
 
 // ============================================================
@@ -343,7 +461,7 @@ static void FetchModsAsync() {
     std::unordered_set<int> seenIds;
 
     const int MAX_PAGES  = 100;
-    const int BATCH_SIZE = 5; // paginas buscadas em paralelo por lote
+    const int BATCH_SIZE = 5;
 
     bool done = false;
     for (int batchStart = 1; !done && batchStart <= MAX_PAGES; batchStart += BATCH_SIZE) {
@@ -369,8 +487,6 @@ static void FetchModsAsync() {
         std::sort(results.begin(), results.end(),
                   [](auto& a, auto& b) { return a.first < b.first; });
 
-        // Processa em ordem de pagina pra manter o dedup e o corte deterministicos,
-        // mesmo com as requisicoes tendo sido disparadas em paralelo.
         for (auto& [page, mods] : results) {
             if (mods.empty()) {
                 SPDLOG_INFO("[ModBrowser] Fim das paginas na {}", page);
@@ -419,9 +535,6 @@ static void FetchModsAsync() {
 
     ModBrowserState::fetching = false;
 
-    // "Atualizar lista" agora ja puxa as thumbnails automaticamente, sem precisar
-    // clicar em "Baixar thumbnails" depois. Chamada direta (mesma thread de
-    // background), FetchAllThumbnailsAsync paraleliza os downloads internamente.
     if (!ModBrowserState::mods.empty()) {
         FetchAllThumbnailsAsync();
     }
@@ -489,10 +602,6 @@ static void DownloadThumbnailToDisk(int modId, std::string url) {
     }
 }
 
-// Baixa varias thumbnails ao mesmo tempo (pool de workers) em vez de uma por vez.
-// Tambem reconsidera thumbnails que falharam antes (Failed), nao so as nunca
-// tentadas (NotLoaded) -- clicar "Baixar thumbnails" agora serve pra tentar de
-// novo o que deu erro.
 static void FetchAllThumbnailsAsync() {
     ModBrowserState::imagesDownloading = true;
 
@@ -658,7 +767,6 @@ static void DownloadModAsync(int modId, std::string modName) {
         std::filesystem::path modsPath = GetModsPath();
         std::string baseName = SanitizeFilename(modName);
 
-        // ---------- Passo 1: pega a lista de arquivos via ProfilePage ----------
         SPDLOG_INFO("[ModBrowser] Buscando ProfilePage do mod {}", modId);
         std::string profBody = HttpGet(
             "gamebanana.com",
@@ -675,7 +783,7 @@ static void DownloadModAsync(int modId, std::string modName) {
         int fileId = 0;
         std::string realFileName;
         std::string realExt;
-        std::string dlUrl;   // URL completa do arquivo (do _sDownloadUrl)
+        std::string dlUrl;
         try {
             json prof = json::parse(profBody);
             if (!prof.contains("_aFiles") || !prof["_aFiles"].is_array() ||
@@ -724,7 +832,6 @@ static void DownloadModAsync(int modId, std::string modName) {
             return;
         }
 
-        // Fallback se a API não mandou _sDownloadUrl
         if (dlUrl.empty() && fileId > 0) {
             dlUrl = "https://gamebanana.com/apiv11/Mod/" +
                     std::to_string(modId) + "/Download/" + std::to_string(fileId);
@@ -746,7 +853,6 @@ static void DownloadModAsync(int modId, std::string modName) {
             }
         }
 
-        // ---------- Passo 2: baixa o arquivo real ----------
         std::string host, path;
         if (!ParseUrl(dlUrl, host, path)) {
             ModBrowserState::lastError = "URL de download invalida";
@@ -812,7 +918,6 @@ static void DownloadModAsync(int modId, std::string modName) {
             return;
         }
 
-        // ---------- Detecção por magic bytes ----------
         char magic[8] = {0};
         { std::ifstream in(tempPath, std::ios::binary); in.read(magic, 8); }
         SPDLOG_INFO("[ModBrowser] Magic: {:02X} {:02X} {:02X} {:02X}  ({})",
@@ -872,7 +977,7 @@ static void DownloadModAsync(int modId, std::string modName) {
 }
 
 // ============================================================
-// Detalhes (agora inline / expansivel, por mod)
+// Detalhes (inline / expansivel, por mod)
 // ============================================================
 
 static void FetchModDetailsAsync(int modId) {
@@ -1000,9 +1105,6 @@ static void DrawModList(WidgetInfo& info) {
             if (!m.profileUrl.empty()) SDL_OpenURL(m.profileUrl.c_str());
         }
         ImGui::SameLine();
-        // Botao "Detalhes" agora funciona como accordion: clica pra expandir a
-        // caixa com o texto inline, clica de novo pra fechar. So dispara o
-        // fetch na primeira vez que abre (fica em cache no proprio ModEntry).
         if (ImGui::Button(m.detailsExpanded ? "Fechar detalhes" : "Detalhes")) {
             m.detailsExpanded = !m.detailsExpanded;
             if (m.detailsExpanded && !m.detailsFetched && !m.detailsFetching) {
@@ -1064,6 +1166,17 @@ void SohMenu::AddMenuModBrowser() {
             if (ModBrowserState::imagesDownloading) return;
             std::thread(FetchAllThumbnailsAsync).detach();
             Notification::Emit({ .message = "Baixando imagens..." });
+        });
+
+    // ---- Novos botoes ----
+    AddWidget(path, "Reiniciar jogo", WIDGET_BUTTON)
+        .Callback([](WidgetInfo& info) {
+            SPDLOG_INFO("[ModBrowser] Reiniciar jogo solicitado pelo usuario");
+            RestartGame();
+        });
+    AddWidget(path, "Abrir pasta de mods", WIDGET_BUTTON)
+        .Callback([](WidgetInfo& info) {
+            OpenModsFolder();
         });
 
     AddWidget(path, "Filtrar", WIDGET_SEPARATOR_TEXT);
