@@ -103,9 +103,24 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     endif()
 
     vcpkg_bootstrap()
-    vcpkg_install_packages(zlib bzip2 libzip libpng sdl2 sdl2-net glew glfw3 nlohmann-json tinyxml2 spdlog libogg libvorbis opus opusfile)
+    vcpkg_install_packages(zlib bzip2 libzip libpng sdl2 sdl2-net glew glfw3 nlohmann-json tinyxml2 spdlog libogg libvorbis opus opusfile openssl)
     if (CMAKE_C_COMPILER_LAUNCHER MATCHES "ccache|sccache")
         set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+    endif()
+endif()
+
+################################################################################
+# OpenSSL para o Mod Browser (HTTPS via cpp-httplib)
+# Linux/macOS: tenta o sistema primeiro; se nao tiver, usa vcpkg automatico.
+################################################################################
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    find_package(OpenSSL QUIET)
+    if(NOT OpenSSL_FOUND)
+        message(STATUS "OpenSSL do sistema nao encontrado, usando vcpkg automatico...")
+        include(CMake/automate-vcpkg.cmake)
+        vcpkg_bootstrap()
+        vcpkg_install_packages(openssl)
+        find_package(OpenSSL REQUIRED)
     endif()
 endif()
 
@@ -369,6 +384,12 @@ add_subdirectory(libultraship ${CMAKE_BINARY_DIR}/libultraship SYSTEM)
 quiet_target(libultraship "${WARNING_OVERRIDE}")
 target_compile_definitions(libultraship PUBLIC INCLUDE_MPQ_SUPPORT)
 add_subdirectory(soh)
+
+################################################################################
+# Linka OpenSSL no executavel soh (necessario para o Mod Browser / cpp-httplib)
+################################################################################
+find_package(OpenSSL REQUIRED)
+target_link_libraries(soh PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 ################################################################################
 # Discord Rich Presence nativo (IPC raw, sem SDK, sem DLL extra)
