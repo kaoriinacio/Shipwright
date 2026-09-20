@@ -5,7 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
-#include <httplib.h>
+#include "httplib.h"
 #include <nlohmann/json.hpp>
 
 #include <string>
