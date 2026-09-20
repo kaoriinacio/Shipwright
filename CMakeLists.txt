@@ -391,6 +391,16 @@ add_subdirectory(soh)
 find_package(OpenSSL REQUIRED)
 target_link_libraries(soh PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
+# Windows: winsock pra httplib
+if(WIN32)
+    target_link_libraries(soh PRIVATE ws2_32)
+endif()
+
+# macOS: Security.framework pra httplib ler keychain do sistema
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    target_link_libraries(soh PRIVATE "-framework Security")
+endif()
+
 ################################################################################
 # Discord Rich Presence nativo (IPC raw, sem SDK, sem DLL extra)
 ################################################################################
