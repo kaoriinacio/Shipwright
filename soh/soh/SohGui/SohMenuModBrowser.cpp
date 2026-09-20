@@ -19,6 +19,7 @@
 #include <ship/window/Window.h>
 #include <ship/window/gui/Gui.h>
 #include <fast/Fast3dGui.h>
+#include <fast/resource/type/Texture.h>
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include "httplib.h"
@@ -26,6 +27,8 @@
 
 #include <SDL2/SDL.h>
 #include <zip.h>
+
+#include <stb_image.h>
 
 #include <string>
 #include <vector>
@@ -39,6 +42,7 @@
 #include <fstream>
 #include <cstring>
 #include <chrono>
+#include <cstdio>
 #include <deque>
 
 namespace SohGui {
@@ -64,10 +68,9 @@ struct ModEntry {
     std::string thumbUrl;
     std::string description;
 
-    // Thumbnail
     ImageState     imgState = ImageState::NotLoaded;
-    std::string    thumbDiskPath;   // caminho em disco depois do download
-    ImTextureID    texId = nullptr; // handle do libultraship
+    std::string    thumbDiskPath;
+    ImTextureID    texId = nullptr;
 };
 
 namespace ModBrowserState {
@@ -143,7 +146,17 @@ static std::string FormatBytes(size_t bytes) {
     return buf;
 }
 
-// Retorna o Fast3dGui. Pode ser nullptr em backends exoticos.
+static std::string ExtensionFromUrl(const std::string& url) {
+    auto last = url.find_last_of('.');
+    if (last == std::string::npos) return ".png";
+    std::string ext = url.substr(last);
+    auto q = ext.find_first_of("?#");
+    if (q != std::string::npos) ext = ext.substr(0, q);
+    if (ext.size() > 5 || ext.size() < 2) return ".png";
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    return ext;
+}
+
 static std::shared_ptr<Fast::Fast3dGui> GetFast3dGui() {
     auto ctx = Ship::Context::GetRawInstance();
     if (!ctx) return nullptr;
@@ -155,7 +168,7 @@ static std::shared_ptr<Fast::Fast3dGui> GetFast3dGui() {
 }
 
 // ============================================================
-// Cache de mods
+// Cache
 // ============================================================
 
 static void SaveCache(const std::vector<ModEntry>& mods) {
@@ -205,7 +218,7 @@ static bool LoadCache(std::vector<ModEntry>& out) {
 }
 
 // ============================================================
-// HTTP GET
+// HTTP
 // ============================================================
 
 static std::string HttpGet(const std::string& host, const std::string& path) {
@@ -266,7 +279,6 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
                 item["_aCategory"].contains("_sName"))
                 m.category = item["_aCategory"]["_sName"].get<std::string>();
 
-            // Thumbnail
             if (item.contains("_aPreviewMedia") && item["_aPreviewMedia"].is_object()) {
                 auto& pm = item["_aPreviewMedia"];
                 if (pm.contains("_aImages") && pm["_aImages"].is_array() && !pm["_aImages"].empty()) {
@@ -281,11 +293,6 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
             if (m.id > 0)
                 m.downloadUrl = "https://gamebanana.com/mods/download/" + std::to_string(m.id);
 
-            if (m.thumbUrl.empty())
-                SPDLOG_WARN("[ModBrowser] Mod '{}' sem thumbUrl", m.name);
-            else
-                SPDLOG_INFO("[ModBrowser] Mod '{}' thumb: {}", m.name, m.thumbUrl);
-
             result.push_back(std::move(m));
         }
     } catch (const std::exception& e) {
@@ -295,7 +302,7 @@ static std::vector<ModEntry> ParseGameBananaMods(const std::string& body) {
 }
 
 // ============================================================
-// Fetch de mods
+// Fetch
 // ============================================================
 
 static void FetchModsAsync() {
@@ -320,7 +327,7 @@ static void FetchModsAsync() {
 }
 
 // ============================================================
-// Thumbnails — so baixa e salva em disco (upload fica na main thread)
+// Thumbnails
 // ============================================================
 
 static void DownloadThumbnailToDisk(int modId, std::string url) {
@@ -332,6 +339,8 @@ static void DownloadThumbnailToDisk(int modId, std::string url) {
         if (slash == std::string::npos) return;
         std::string host = url.substr(0, slash);
         std::string path = url.substr(slash);
+
+        std::string ext = ExtensionFromUrl(path);
 
         httplib::Client cli("https://" + host);
         cli.set_follow_location(true);
@@ -348,13 +357,18 @@ static void DownloadThumbnailToDisk(int modId, std::string url) {
             return;
         }
 
-        std::filesystem::path diskPath = GetThumbsPath() / (std::to_string(modId) + ".img");
+        if (ext == ".png" && res->has_header("Content-Type")) {
+            std::string ct = res->get_header_value("Content-Type");
+            if (ct.find("jpeg") != std::string::npos || ct.find("jpg") != std::string::npos) ext = ".jpg";
+            else if (ct.find("png") != std::string::npos) ext = ".png";
+        }
+
+        std::filesystem::path diskPath = GetThumbsPath() / (std::to_string(modId) + ext);
         std::ofstream out(diskPath, std::ios::binary);
         out.write(res->body.data(), res->body.size());
         out.close();
 
-        SPDLOG_INFO("[ModBrowser] Thumb salva: {} ({} bytes)",
-                    diskPath.string(), res->body.size());
+        SPDLOG_INFO("[ModBrowser] Thumb salva: {} ({} bytes)", diskPath.string(), res->body.size());
 
         std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
         for (auto& m : ModBrowserState::mods) {
@@ -389,35 +403,60 @@ static void FetchAllThumbnailsAsync() {
     ModBrowserState::imagesDownloading = false;
 }
 
-// Faz o upload das texturas pendentes pra GPU (main thread)
+// Carrega o arquivo em disco com stb_image e registra via LoadGuiTexture.
+// Bypassa o LoadTextureFromRawImage (que crasha nesse fork).
 static void UploadPendingThumbnails() {
     auto gui = GetFast3dGui();
     if (!gui) return;
 
     std::lock_guard<std::mutex> lk(ModBrowserState::modsMutex);
     for (auto& m : ModBrowserState::mods) {
-        if (m.imgState == ImageState::NeedUpload && !m.thumbDiskPath.empty()) {
-            std::string texName = "mb_thumb_" + std::to_string(m.id);
-            try {
-                gui->LoadTextureFromRawImage(texName, m.thumbDiskPath);
-                m.texId = gui->GetTextureByName(texName);
-                if (m.texId) {
-                    m.imgState = ImageState::Loaded;
-                    SPDLOG_INFO("[ModBrowser] Textura carregada: {} (mod {})", texName, m.id);
-                } else {
-                    m.imgState = ImageState::Failed;
-                    SPDLOG_WARN("[ModBrowser] GetTextureByName retornou null pra {}", texName);
-                }
-            } catch (const std::exception& e) {
+        if (m.imgState != ImageState::NeedUpload || m.thumbDiskPath.empty()) continue;
+
+        std::string texName = "mb_thumb_" + std::to_string(m.id);
+        int w = 0, h = 0, ch = 0;
+        unsigned char* pix = stbi_load(m.thumbDiskPath.c_str(), &w, &h, &ch, 4);
+        if (!pix || w <= 0 || h <= 0) {
+            SPDLOG_WARN("[ModBrowser] stbi_load falhou: {}", m.thumbDiskPath);
+            if (pix) stbi_image_free(pix);
+            m.imgState = ImageState::Failed;
+            continue;
+        }
+
+        size_t bytes = (size_t)w * h * 4;
+        auto buf = std::make_shared<std::vector<char>>(bytes);
+        std::memcpy(buf->data(), pix, bytes);
+        stbi_image_free(pix);
+
+        Fast::Texture tex;
+        tex.Type = Fast::TextureType::RGBA32bpp;
+        tex.Width = (uint16_t)w;
+        tex.Height = (uint16_t)h;
+        tex.ImageDataSize = (uint32_t)bytes;
+        tex.ImageData = reinterpret_cast<uint8_t*>(buf->data());
+        tex.Flags = 0;
+        tex.mImageBuffer = buf;
+
+        ImVec4 tint(1.0f, 1.0f, 1.0f, 1.0f);
+        try {
+            gui->LoadGuiTexture(texName, tex, tint);
+            m.texId = gui->GetTextureByName(texName);
+            if (m.texId) {
+                m.imgState = ImageState::Loaded;
+                SPDLOG_INFO("[ModBrowser] Textura carregada: {} ({}x{})", texName, w, h);
+            } else {
                 m.imgState = ImageState::Failed;
-                SPDLOG_WARN("[ModBrowser] LoadTextureFromRawImage falhou: {}", e.what());
+                SPDLOG_WARN("[ModBrowser] GetTextureByName null pra {}", texName);
             }
+        } catch (const std::exception& e) {
+            m.imgState = ImageState::Failed;
+            SPDLOG_WARN("[ModBrowser] LoadGuiTexture excecao: {}", e.what());
         }
     }
 }
 
 // ============================================================
-// Extracao de .otr/.o2r de zip
+// Extracao de zip
 // ============================================================
 
 static bool ExtractModFilesFromZip(const std::filesystem::path& zipPath,
@@ -470,7 +509,7 @@ static bool ExtractModFilesFromZip(const std::filesystem::path& zipPath,
 }
 
 // ============================================================
-// Download do mod — deteccao por magic bytes
+// Download
 // ============================================================
 
 static void DownloadModAsync(int modId, std::string modName) {
@@ -499,7 +538,9 @@ static void DownloadModAsync(int modId, std::string modName) {
         if (!out) {
             ModBrowserState::lastError = "Nao consegui abrir arquivo";
             Notification::Emit({ .message = "Erro: nao consegui salvar" });
-            ModBrowserState::downloading = false; return;
+            ModBrowserState::downloading = false;
+            ModBrowserState::downloadModId = 0;
+            return;
         }
 
         std::string url = "/mods/download/" + std::to_string(modId);
@@ -525,6 +566,47 @@ static void DownloadModAsync(int modId, std::string modName) {
             return;
         }
 
+        // Extrai nome do arquivo do header Content-Disposition
+        std::string serverFilename;
+        if (res->has_header("Content-Disposition")) {
+            std::string cd = res->get_header_value("Content-Disposition");
+            SPDLOG_INFO("[ModBrowser] Content-Disposition: {}", cd);
+
+            auto pos = cd.find("filename*=");
+            if (pos != std::string::npos) {
+                std::string rest = cd.substr(pos + 10);
+                auto quote = rest.find("''");
+                if (quote != std::string::npos) {
+                    serverFilename = rest.substr(quote + 2);
+                    auto end = serverFilename.find(';');
+                    if (end != std::string::npos) serverFilename = serverFilename.substr(0, end);
+                    if (!serverFilename.empty() && serverFilename.front() == '"') serverFilename.erase(0, 1);
+                    if (!serverFilename.empty() && serverFilename.back()  == '"') serverFilename.pop_back();
+                }
+            }
+            if (serverFilename.empty()) {
+                auto pos2 = cd.find("filename=");
+                if (pos2 != std::string::npos) {
+                    std::string rest = cd.substr(pos2 + 9);
+                    auto end = rest.find(';');
+                    if (end != std::string::npos) rest = rest.substr(0, end);
+                    if (!rest.empty() && rest.front() == '"') rest.erase(0, 1);
+                    if (!rest.empty() && rest.back()  == '"') rest.pop_back();
+                    serverFilename = rest;
+                }
+            }
+        }
+
+        std::string serverExt;
+        if (!serverFilename.empty()) {
+            auto dot = serverFilename.find_last_of('.');
+            if (dot != std::string::npos) {
+                serverExt = serverFilename.substr(dot);
+                std::transform(serverExt.begin(), serverExt.end(), serverExt.begin(), ::tolower);
+            }
+        }
+        SPDLOG_INFO("[ModBrowser] Extensao do servidor: '{}' (arquivo: '{}')", serverExt, serverFilename);
+
         char magic[8] = {0};
         { std::ifstream in(tempPath, std::ios::binary); in.read(magic, 8); }
         SPDLOG_INFO("[ModBrowser] Magic: {:02X} {:02X} {:02X} {:02X}  ({})",
@@ -537,7 +619,12 @@ static void DownloadModAsync(int modId, std::string modName) {
 
         std::error_code ec;
 
-        if (isZip) {
+        if (serverExt == ".otr" || serverExt == ".o2r" || serverExt == ".ootr" || isMpq) {
+            std::filesystem::path finalPath = modsPath / (baseName + ".otr");
+            std::filesystem::rename(tempPath, finalPath, ec);
+            SPDLOG_INFO("[ModBrowser] Salvo: {}", finalPath.string());
+            Notification::Emit({ .message = "Instalado: " + modName + " (reinicie)" });
+        } else if (isZip) {
             SPDLOG_INFO("[ModBrowser] ZIP detectado, extraindo...");
             bool ok = ExtractModFilesFromZip(tempPath, modsPath);
             if (ok) {
@@ -548,16 +635,12 @@ static void DownloadModAsync(int modId, std::string modName) {
                 std::filesystem::rename(tempPath, finalZip, ec);
                 Notification::Emit({ .message = "Baixado (sem .otr dentro): " + modName });
             }
-        } else if (isMpq) {
-            std::filesystem::path finalOtr = modsPath / (baseName + ".otr");
-            std::filesystem::rename(tempPath, finalOtr, ec);
-            SPDLOG_INFO("[ModBrowser] MPQ/OTR salvo: {}", finalOtr.string());
-            Notification::Emit({ .message = "Instalado: " + modName + " (reinicie)" });
         } else {
-            std::filesystem::path finalBin = modsPath / (baseName + ".bin");
-            std::filesystem::rename(tempPath, finalBin, ec);
-            SPDLOG_WARN("[ModBrowser] Formato desconhecido");
-            Notification::Emit({ .message = "Formato desconhecido: " + modName });
+            std::string ext = serverExt.empty() ? ".bin" : serverExt;
+            std::filesystem::path finalPath = modsPath / (baseName + ext);
+            std::filesystem::rename(tempPath, finalPath, ec);
+            SPDLOG_WARN("[ModBrowser] Extensao desconhecida '{}', salvo como {}", ext, finalPath.string());
+            Notification::Emit({ .message = "Baixado: " + modName + ext });
         }
 
     } catch (const std::exception& e) {
@@ -602,7 +685,6 @@ static void FetchDetailsAsync(int modId) {
 // ============================================================
 
 static void DrawModList(WidgetInfo& info) {
-    // Upload das thumbnails pendentes (main thread)
     UploadPendingThumbnails();
 
     std::lock_guard<std::mutex> lock(ModBrowserState::modsMutex);
@@ -738,7 +820,7 @@ static void DrawDetails(WidgetInfo& info) {
 // ============================================================
 
 void SohMenu::AddMenuModBrowser() {
-    AddMenuEntry("Mod Browser", CVAR_SETTING("Menu.ModBrowserSidebarSection"));
+    AddMenuEntry("Mod Browser", CVAR_SETTING("ModBrowserSidebarSection"));
     WidgetPath path;
 
     path = { "Mod Browser", "Browse", SECTION_COLUMN_1 };
@@ -780,7 +862,7 @@ void SohMenu::AddMenuModBrowser() {
     AddWidget(path,
               "Mod Browser experimental para SoH.\n"
               "Fonte: GameBanana API v11.\n"
-              "Funciona em DX11, OpenGL e Metal.",
+              "Auto-install de .otr/.o2r/zips.",
               WIDGET_TEXT);
 }
 
