@@ -88,6 +88,7 @@ void SohMenu::AddMenuElements() {
     AddMenuEnhancements();
     AddMenuRandomizer();
     AddMenuNetwork();
+    AddMenuModBrowser();
     AddMenuDevTools();
 
     if (CVarGetInteger(CVAR_SETTING("Menu.SidebarSearch"), 0)) {
