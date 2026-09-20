@@ -84,6 +84,9 @@ SohMenu::SohMenu(const std::string& consoleVariable, const std::string& name)
 }
 
 void SohMenu::AddMenuElements() {
+    // Mod Browser: carrega o cache local de mods antes de montar os menus
+    ModBrowserInit();
+
     AddMenuSettings();
     AddMenuEnhancements();
     AddMenuRandomizer();
